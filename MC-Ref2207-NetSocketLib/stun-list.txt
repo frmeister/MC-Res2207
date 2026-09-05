@@ -1,0 +1,10 @@
+google.com
+google.com
+google.com
+cloudflare.com
+stun.sipgate.net:3478
+stun.ekiga.net:3478
+142.250.4.127:19302
+108.177.14.127:19302
+172.64.154.21:3478
+217.10.68.152:3478
