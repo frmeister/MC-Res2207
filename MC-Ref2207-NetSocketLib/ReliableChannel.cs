@@ -27,9 +27,11 @@ namespace MC_Ref2207_NetSocketLib
         private readonly UdpPeer _udpPeer;
         private IPEndPoint? _remoteEndPoint;
         private readonly Timer _inactivityTimer;
+        private int _sessionId;
+        private int _peerSessionId;
 
         // -- Для отправки --
-        private int _nextsendSeq = 0; // Следующий номер последовательности для отправки
+        private int _nextSendSeq = 0; // Следующий номер последовательности для отправки
         private readonly ConcurrentDictionary<int, OutgoingPacket> _sentPackets = new(); // Содержит очередь пакетов для отправления
         private readonly Queue<byte[]> _sendQueue = new(); // Очередь данных для отправки
         private readonly SemaphoreSlim _sendSemaphore = new(1, 1);
@@ -47,7 +49,7 @@ namespace MC_Ref2207_NetSocketLib
         {
             _udpPeer = udpPeer ?? throw new ArgumentNullException(nameof(udpPeer));
             // Подписались на событие получения данных
-            _udpPeer.DataReceived += OnUpdDataaReceived;
+            _udpPeer.DataReceived += OnUpdDataReceived;
 
             // Инициализируем таймер неактивности
             _inactivityTimer = new Timer(CheckInactivity, null, Timeout.Infinite, Timeout.Infinite);
@@ -74,6 +76,9 @@ namespace MC_Ref2207_NetSocketLib
             _inactivityTimer.Change(InactivityTimeoutMs, InactivityTimeoutMs);
 
             // Отправляем Hello пакет (или начальный SYN пакет, если будет усложнённый handshake)
+
+            
+
             // Для простоты, считаем, что соединение установлено сразу после получения первого пакета от партнёра
             // или после успешного hole punching (что происходит до вызова Connect).
             // В реальности здесь может быть сложный handshake.
@@ -175,10 +180,21 @@ namespace MC_Ref2207_NetSocketLib
             }
         }
 
+        private async Task SendHelloAsync()
+        {
+            if (_remoteEndPoint == null) return;
+
+            var payload = BitConverter.GetBytes(_sessionId);
+            var hello = new Packet(payload, _sessionId, 0, PacketType.Hello);
+
+            _ = _udpPeer.SendToAsync(hello.ToBytes(), _remoteEndPoint);
+            Debug.WriteLine($"[Core.Network.ReliableChannel] Sent Hello, session={_sessionId}");
+        }
+
         // -- Получение данных --
         private void OnUdpDataReceived(object? sender, UdpPeer.UdpDataReceivedEventArgs e)
         {
-            if (_state != ConnectionState.Established) return; // Игнорируем если не установлено соединение
+            if (_state == ConnectionState.Disconnected || _state == ConnectionState.Closed) return; // Игнорируем если не установлено соединение
             if (_remoteEndPoint != null && !e.RemoteEndPoint.Equals(_remoteEndPoint)) return; // Игнорируем если не от нашего партнера
 
             // Сброс таймера неактивности
@@ -251,7 +267,7 @@ namespace MC_Ref2207_NetSocketLib
                     if (_receivedBuffer.TryGetValue(_expectedRecvSeq, out var bufferedData))
                     {
                         EnqueueReceivedData(bufferedData);
-                        _receivedBuffer.RemoveAt(0);
+                        _receivedBuffer.RemoveAt(_expectedRecvSeq);
                         _expectedRecvSeq++;
                     }
                 }
@@ -302,6 +318,34 @@ namespace MC_Ref2207_NetSocketLib
                     // Вызываем событие для вернего уровня (например TcpBridge)
                     DataReceived?.Invoke(this, dataToProcess);
                 }
+            }
+        }
+
+        private async Task HandleHello(Packet packet)
+        {
+            if (packet.Payload.Length < 4) return;
+
+            int incomingSession = BitConverter.ToInt32(packet.Payload, 0);
+
+            if (_state == ConnectionState.Connecting)
+            {
+                // Первый Hello от партнера  - фиксируем его sessionId и отвечаем
+                _peerSessionId = incomingSession;
+                SendHelloAsync();
+                _state = ConnectionState.Established;
+                Debug.WriteLine($"[ReliableChannel] Handshake complete, peerSession={_peerSessionId}");
+            }
+            else if (_state == ConnectionState.Established)
+            {
+                // Повторный Hello (мы его ретранслировали, или партнёр переслал) — просто переподтверждаем
+                if (_peerSessionId != incomingSession)
+                {
+                    // партнёр реконнектится — сбрасываем состояние
+                    _peerSessionId = incomingSession;
+                    _expectedRecvSeq = 0;
+                    _receivedBuffer.Clear();
+                }
+                SendHelloAsync();
             }
         }
 
@@ -357,7 +401,7 @@ namespace MC_Ref2207_NetSocketLib
             // Очистить очереди, таймеры и т.д.
         }
 
-        private void OnUpdDataaReceived(object? sender, UdpPeer.UdpDataReceivedEventArgs e)
+        private void OnUpdDataReceived(object? sender, UdpPeer.UdpDataReceivedEventArgs e)
         {
             throw new NotImplementedException();
         }

@@ -14,7 +14,7 @@ namespace MCTunnel.Core.Network
     {
         private readonly UdpClient _udpClient;
         private IPEndPoint? _remoteEndPoint; // Используем nullable reference type
-        private volatile bool _disposed; // volatile для безопасности потоков при проверке
+        private volatile bool _disposed;
 
         public class UdpDataReceivedEventArgs : EventArgs
         {
