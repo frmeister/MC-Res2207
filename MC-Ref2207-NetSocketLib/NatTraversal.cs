@@ -44,9 +44,6 @@ namespace MCTunnel.Core.Network
                 }
             }
 
-            // Подписываемся на событие до начала ожидания
-            peer.DataReceived += OnDataReceived;
-
             // Ожидаем результат или таймаут/отмену
             using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {

@@ -49,7 +49,7 @@ namespace MC_Ref2207_NetSocketLib
         {
             _udpPeer = udpPeer ?? throw new ArgumentNullException(nameof(udpPeer));
             // Подписались на событие получения данных
-            _udpPeer.DataReceived += OnUpdDataReceived;
+            _udpPeer.DataReceived += OnUdpDataReceived;
 
             // Инициализируем таймер неактивности
             _inactivityTimer = new Timer(CheckInactivity, null, Timeout.Infinite, Timeout.Infinite);
