@@ -43,7 +43,7 @@ namespace MC_Ref2207_NetSocketLib
         private readonly SemaphoreSlim _receivedSemaphore = new(0, int.MaxValue);
 
         // -- События --
-        public EventHandler<byte[]?> DataReceived; // Событие для полученных данных
+        public event EventHandler<byte[]?> DataReceived; // Событие для полученных данных
 
         public ReliableChannel(UdpPeer udpPeer)
         {
@@ -69,22 +69,67 @@ namespace MC_Ref2207_NetSocketLib
                 throw new InvalidOperationException($"Cannot connect while in state: {_state}");
             }
 
+            // Validate endpoint
             _remoteEndPoint = remoteEndPoint ?? throw new ArgumentNullException(nameof(remoteEndPoint));
-            _state = ConnectionState.Connecting;
 
-            // Запускаем таймер неактивности
-            _inactivityTimer.Change(InactivityTimeoutMs, InactivityTimeoutMs);
+            // Ensure we have a non-zero session id to identify this side during handshake
+            if (_sessionId == 0)
+            {
+                _sessionId = Environment.TickCount ^ Guid.NewGuid().GetHashCode();
+            }
 
-            // Отправляем Hello пакет (или начальный SYN пакет, если будет усложнённый handshake)
+            // Enter connecting state
+            lock (_stateLock)
+            {
+                _state = ConnectionState.Connecting;
+            }
 
-            
+            Debug.WriteLine($"[Core.Network.ReliableChannel] Starting handshake with {_remoteEndPoint}, session={_sessionId}");
 
-            // Для простоты, считаем, что соединение установлено сразу после получения первого пакета от партнёра
-            // или после успешного hole punching (что происходит до вызова Connect).
-            // В реальности здесь может быть сложный handshake.
-            // Пока просто переходим в Established, когда знаем remoteEndPoint.
-            _state = ConnectionState.Established;
-            // TODO: Возможно, стоит отправить специальный пакет подтверждения соединения.
+            // Send an initial Hello immediately. The incoming Hello from peer will be processed
+            // in OnUdpDataReceived -> HandleHello which sets _state = Established when appropriate.
+            _ = SendHelloAsync();
+
+            // Try a few times to solicit a Hello from the peer. We keep Connect synchronous to avoid
+            // changing other code; this is a simple polling loop that repeatedly sends Hello and
+            // waits a short interval for the peer to respond. If HandleHello runs it will set
+            // _state to Established and we will stop retrying.
+            for (int attempt = 0; attempt < MaxRetries && _state == ConnectionState.Connecting; attempt++)
+            {
+                Debug.WriteLine($"[Core.Network.ReliableChannel] Hello sent (attempt {attempt + 1}/{MaxRetries})");
+
+                // Send another hello to increase chance of punch-through
+                _ = SendHelloAsync();
+
+                // Wait up to RetryDelayMs for the peer to reply. Small sleeps to yield CPU.
+                var waitUntil = DateTime.UtcNow.AddMilliseconds(RetryDelayMs);
+                while (DateTime.UtcNow < waitUntil && _state == ConnectionState.Connecting)
+                {
+                    Thread.Sleep(50);
+                }
+            }
+
+            if (_state == ConnectionState.Established)
+            {
+                Debug.WriteLine("[Core.Network.ReliableChannel] Handshake succeeded; connection established.");
+
+                // Start inactivity timer only after established
+                _inactivityTimer.Change(InactivityTimeoutMs, InactivityTimeoutMs);
+
+                // Keep current behavior: connection is established and ready for data sending.
+            }
+            else
+            {
+                // Handshake failed within retry window. Revert to Disconnected to preserve existing logic.
+                Debug.WriteLine("[Core.Network.ReliableChannel] Handshake failed, reverting to Disconnected.");
+                lock (_stateLock)
+                {
+                    _state = ConnectionState.Disconnected;
+                }
+
+                // Do not start inactivity timer and do not mark Established; caller may retry Connect().
+                return;
+            }
         }
 
         // -- Отправка данных --
@@ -218,6 +263,7 @@ namespace MC_Ref2207_NetSocketLib
                         HandleData(packet);
                         break;
                     case PacketType.Hello:
+                        HandleHello(packet);
                         // Игнорируем или обрабатывем как пакет для подключения или подтверждения
                         // SenAck(packet.Sequence + 1) // Подтверждаем Hello
                         break;
@@ -329,7 +375,7 @@ namespace MC_Ref2207_NetSocketLib
 
             if (_state == ConnectionState.Connecting)
             {
-                // Первый Hello от партнера  - фиксируем его sessionId и отвечаем
+                // Первый Hello от партнера - фиксируем его sessionId и отвечаем
                 _peerSessionId = incomingSession;
                 SendHelloAsync();
                 _state = ConnectionState.Established;
@@ -385,9 +431,6 @@ namespace MC_Ref2207_NetSocketLib
         // -- Закрытие --
         public void Close()
         {
-            // var oldState = Interlocked.Exchange(ref _state, ConnectionState.Closed);
-            // if (oldState == ConnectionState.Closed) return;
-
             lock(_stateLock)
             {
                 if (_state == ConnectionState.Closed) return; // Проверяем и меняем состояние атомарно
@@ -401,10 +444,10 @@ namespace MC_Ref2207_NetSocketLib
             // Очистить очереди, таймеры и т.д.
         }
 
-        private void OnUpdDataReceived(object? sender, UdpPeer.UdpDataReceivedEventArgs e)
-        {
-            throw new NotImplementedException();
-        }
+        // private void OnUpdDataReceived(object? sender, UdpPeer.UdpDataReceivedEventArgs e)
+        //{
+        //    throw new NotImplementedException();
+        //}
 
         public void Dispose()
         {

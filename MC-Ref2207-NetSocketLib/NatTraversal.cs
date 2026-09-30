@@ -44,6 +44,10 @@ namespace MCTunnel.Core.Network
                 }
             }
 
+            // Подписываемся на событие еще до отправления HELLO
+            peer.DataReceived += OnDataReceived;
+
+
             // Ожидаем результат или таймаут/отмену
             using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
@@ -73,52 +77,50 @@ namespace MCTunnel.Core.Network
             if (peer == null || hostEndPoint == null) throw new ArgumentNullException(peer == null ? nameof(peer) : nameof(hostEndPoint));
 
             byte[] helloData = Encoding.ASCII.GetBytes("HELLO");
-            var stopwatch = Stopwatch.StartNew();
-
-            // Отправляем HELLO с интервалом, пока не получим ACK или не истечёт таймаут
-            while (stopwatch.Elapsed.TotalSeconds < TimeoutSeconds && !cancellationToken.IsCancellationRequested)
-            {
-                await peer.SendToAsync(helloData, hostEndPoint);
-                await Task.Delay(HelloIntervalMs, cancellationToken);
-            }
 
             // Здесь нужно дождаться ACK. Используем TaskCompletionSource и подписку на событие.
             var ackTcs = new TaskCompletionSource<bool>();
 
+            // var stopwatch = Stopwatch.StartNew();
+
             void OnDataReceived(object? sender, UdpPeer.UdpDataReceivedEventArgs e)
             {
-                if (e.RemoteEndPoint.Equals(hostEndPoint)) // Убедимся, что ACK от правильного хоста
+                if (e.RemoteEndPoint.Equals(hostEndPoint) &&
+                e.Data.Length >= 3 && Encoding.ASCII.GetString(e.Data, 0, 3) == "ACK")
                 {
-                    if (e.Data.Length >= 3 && Encoding.ASCII.GetString(e.Data, 0, 3) == "ACK")
-                    {
-                        peer.DataReceived -= OnDataReceived; // Отписываемся после получения ACK
-                        ackTcs.TrySetResult(true);
-                    }
+                    peer.DataReceived -= OnDataReceived;
+                    ackTcs.TrySetResult(true);
                 }
             }
 
             peer.DataReceived += OnDataReceived;
 
-            // Запускаем таймаут
-            using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-            {
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
 
-                using (timeoutCts.Token.Register(() => ackTcs.TrySetCanceled(timeoutCts.Token)))
+            // Запускаем таймаут
+            var senderTask = Task.Run(async () =>
+            {
+                while (!ackTcs.Task.IsCompleted && !timeoutCts.IsCancellationRequested)
                 {
-                    try
-                    {
-                        await ackTcs.Task;
-                        // Успешно получили ACK — устанавливаем удалённый адрес
-                        peer.SetRemoteEndPoint(hostEndPoint);
-                        return true;
-                    }
-                    catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
-                    {
-                        // Таймаут или внешняя отмена
-                        peer.DataReceived -= OnDataReceived; // Убедимся, что отписались
-                        return false; // Таймаут или отмена
-                    }
+                    await peer.SendToAsync(helloData, hostEndPoint);
+                    try { await Task.Delay(HelloIntervalMs, timeoutCts.Token); }
+                    catch (OperationCanceledException) { break; }
+                }
+            });
+
+            using (timeoutCts.Token.Register(() => ackTcs.TrySetCanceled(timeoutCts.Token)))
+            {
+                try
+                {
+                    await ackTcs.Task; // завершится сразу, как только придёт ACK
+                    peer.SetRemoteEndPoint(hostEndPoint);
+                    return true;
+                }
+                catch (OperationCanceledException)
+                {
+                    peer.DataReceived -= OnDataReceived;
+                    return false;
                 }
             }
         }

@@ -56,7 +56,7 @@ namespace MC_Ref2207_NetSocketLib
                 writer.Write((byte)Type);
                 writer.Write(IPAddress.HostToNetworkOrder(Sequence));
                 writer.Write(IPAddress.HostToNetworkOrder(Acknowledgment));
-                writer.Write((short)IPAddress.HostToNetworkOrder(Payload.Length));
+                writer.Write(IPAddress.HostToNetworkOrder((short)Payload.Length));
                 writer.Write(Payload);
                 return ms.ToArray();
             }
