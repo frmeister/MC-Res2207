@@ -121,6 +121,7 @@ namespace MCTunnel.Core.Network
         private const byte TcpCloseBackFrame = 0x14; // хост → клиент: [streamId(4)]
         private const byte UdpFrame = 0x20;          // клиент → хост, датаграммой: [ruleId][flowId(2)][данные]
         private const byte UdpBackFrame = 0x21;      // хост → клиент, датаграммой: [ruleId][flowId(2)][данные]
+        private const byte FirstForeignFrame = 0x30; // 0x30 и выше — кадры других протоколов поверх того же канала (комнаты)
 
         private const int TcpHeaderSize = 5;
         private const int UdpHeaderSize = 4;
@@ -146,6 +147,7 @@ namespace MCTunnel.Core.Network
         private readonly ConcurrentDictionary<int, TcpBridge> _clientStreams = new();
         private readonly ConcurrentDictionary<byte, ClientUdpPort> _clientUdpPorts = new();
         private int _nextStreamId;
+        private readonly IReadOnlyDictionary<ForwardRule, int> _preferredLocalPorts;
 
         /// <summary>Сообщение чата от партнёра.</summary>
         public event EventHandler<string>? TextReceived;
@@ -153,9 +155,14 @@ namespace MCTunnel.Core.Network
         /// <summary>Партнёр открыл порт, и он доступен на этом компьютере.</summary>
         public event EventHandler<OpenedPort>? RemotePortOpened;
 
-        public TunnelSession(ReliableChannel channel)
+        /// <param name="preferredLocalPorts">
+        /// Локальные порты, которые занять для портов партнёра, если они свободны: после переподключения
+        /// игра продолжает ходить на тот же адрес 127.0.0.1:порт. Занят — система выберет другой.
+        /// </param>
+        public TunnelSession(ReliableChannel channel, IReadOnlyDictionary<ForwardRule, int>? preferredLocalPorts = null)
         {
             _channel = channel ?? throw new ArgumentNullException(nameof(channel));
+            _preferredLocalPorts = preferredLocalPorts ?? new Dictionary<ForwardRule, int>();
             _channel.DataReceived += OnFrameReceived;
             _channel.DatagramReceived += OnDatagramReceived;
             _channel.Closed += OnChannelClosed;
@@ -167,6 +174,12 @@ namespace MCTunnel.Core.Network
         {
             get { lock (_sync) { return _remotePorts.Values.ToList(); } }
         }
+
+        /// <summary>
+        /// Сколько соединений игры партнёра сейчас пересылается к серверам этого компьютера.
+        /// Больше нуля — игра партнёра подключена. UDP-поток считается, пока по нему что-то шло за последнюю минуту.
+        /// </summary>
+        public int ForwardedConnectionCount => _hostStreams.Count + _hostUdpFlows.Count;
 
         public Task SendTextAsync(string text)
         {
@@ -251,6 +264,8 @@ namespace MCTunnel.Core.Network
                             if (_clientStreams.TryGetValue(ReadStreamId(frame), out var stream)) stream.OnRemoteClosed();
                             break;
                         }
+                    case >= FirstForeignFrame:
+                        break; // Кадр другого протокола на том же канале
                     default:
                         Trace.WriteLine($"[Core.Network.Tunnel] Unknown or malformed frame 0x{frame[0]:X2}, length {frame.Length}");
                         break;
@@ -324,20 +339,34 @@ namespace MCTunnel.Core.Network
             }
         }
 
-        // Порт выбирает система, а не берём номер порта сервера партнёра. Иначе, если обе копии программы на одном
-        // компьютере, а сервер не запущен, хост подключался бы к "своему серверу" 127.0.0.1:порт и попадал в этот же
-        // слушатель — соединения бесконечно ходили бы по кругу через туннель.
+        // Порт выбирает система (или берём порт прошлого подключения), а не номер порта сервера партнёра. Иначе, если
+        // обе копии программы на одном компьютере, а сервер не запущен, хост подключался бы к "своему серверу"
+        // 127.0.0.1:порт и попадал в этот же слушатель — соединения бесконечно ходили бы по кругу через туннель.
         // Слушаем только 127.0.0.1: из локальной сети туннель не виден
-        private static Socket BindLocal(ForwardProtocol protocol)
+        private Socket BindLocal(ForwardRule rule)
         {
-            var socket = PortProbe.CreateSocket(protocol);
-            socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-            return socket;
+            if (_preferredLocalPorts.TryGetValue(rule, out var preferred) && preferred != rule.Port)
+            {
+                var socket = PortProbe.CreateSocket(rule.Protocol);
+                try
+                {
+                    socket.Bind(new IPEndPoint(IPAddress.Loopback, preferred));
+                    return socket;
+                }
+                catch (SocketException)
+                {
+                    socket.Dispose(); // Занят — берём любой свободный
+                }
+            }
+
+            var any = PortProbe.CreateSocket(rule.Protocol);
+            any.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            return any;
         }
 
         private OpenedPort OpenClientTcpPort(byte ruleId, ForwardRule rule)
         {
-            var listener = BindLocal(ForwardProtocol.Tcp);
+            var listener = BindLocal(rule);
             listener.Listen(16);
             lock (_sync) { _listeners.Add(listener); }
             _ = AcceptLoopAsync(listener, ruleId);
@@ -383,7 +412,7 @@ namespace MCTunnel.Core.Network
 
         private OpenedPort OpenClientUdpPort(byte ruleId, ForwardRule rule)
         {
-            var socket = BindLocal(ForwardProtocol.Udp);
+            var socket = BindLocal(rule);
             UdpPeer.DisableConnectionResetErrors(socket);
             var port = new ClientUdpPort(ruleId, socket);
             _clientUdpPorts[ruleId] = port;
