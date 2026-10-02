@@ -66,6 +66,54 @@ namespace MCTunnel.Tests
             Assert.False(connected, "Client should not have connected to non-existent host.");
         }
 
+        private static UdpPeer CreateLoopbackPeer()
+        {
+            var peer = new UdpPeer(new IPEndPoint(IPAddress.Loopback, 0));
+            _ = Task.Run(() => peer.StartReceivingAsync());
+            return peer;
+        }
+
+        [Fact]
+        public async Task PunchAsync_BothSidesSimultaneously_ReturnPartnerEndPoints()
+        {
+            using var peerA = CreateLoopbackPeer();
+            using var peerB = CreateLoopbackPeer();
+
+            var results = await Task.WhenAll(
+                NatTraversal.PunchAsync(peerA, peerB.LocalEndPoint!, TimeSpan.FromSeconds(5)),
+                NatTraversal.PunchAsync(peerB, peerA.LocalEndPoint!, TimeSpan.FromSeconds(5)));
+
+            Assert.Equal(peerB.LocalEndPoint, results[0]);
+            Assert.Equal(peerA.LocalEndPoint, results[1]);
+            Assert.Equal(peerB.LocalEndPoint, peerA.GetRemoteEndPoint());
+        }
+
+        // Люди не нажимают Enter одновременно: вторая сторона начинает позже
+        [Fact]
+        public async Task PunchAsync_PartnerStartsLater_BothSucceed()
+        {
+            using var peerA = CreateLoopbackPeer();
+            using var peerB = CreateLoopbackPeer();
+
+            var punchA = NatTraversal.PunchAsync(peerA, peerB.LocalEndPoint!, TimeSpan.FromSeconds(10));
+            await Task.Delay(1500);
+            var punchB = NatTraversal.PunchAsync(peerB, peerA.LocalEndPoint!, TimeSpan.FromSeconds(10));
+
+            Assert.Equal(peerB.LocalEndPoint, await punchA);
+            Assert.Equal(peerA.LocalEndPoint, await punchB);
+        }
+
+        [Fact]
+        public async Task PunchAsync_PartnerSilent_ReturnsNullAfterTimeout()
+        {
+            using var peerA = CreateLoopbackPeer();
+            using var silentPeer = CreateLoopbackPeer();
+
+            var result = await NatTraversal.PunchAsync(peerA, silentPeer.LocalEndPoint!, TimeSpan.FromMilliseconds(500));
+
+            Assert.Null(result);
+        }
+
         [Fact]
         public async Task WaitForClientAsync_Cancelled_ThrowsOperationCanceledException()
         {

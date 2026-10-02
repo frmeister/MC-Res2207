@@ -105,11 +105,11 @@ namespace MC_Ref2207_NetSocketLib
                 _state = ConnectionState.Connecting;
             }
 
-            Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: starting handshake with {_remoteEndPoint}, session={_sessionId}");
+            Trace.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: starting handshake with {_remoteEndPoint}, session={_sessionId}");
 
             // Determine handshake timeout: if caller provided value (>0) use it, otherwise use default MaxRetries * RetryDelayMs
             int effectiveTimeoutMs = handshakeTimeoutMs > 0 ? handshakeTimeoutMs : (MaxRetries * RetryDelayMs);
-            Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: handshake timeout set to {effectiveTimeoutMs}ms");
+            Trace.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: handshake timeout set to {effectiveTimeoutMs}ms");
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(effectiveTimeoutMs)); // Таймаут на рукопожатие
@@ -121,7 +121,7 @@ namespace MC_Ref2207_NetSocketLib
                 while (!handshakeTcs.Task.IsCompleted && !timeoutCts.IsCancellationRequested)
                 {
                     attempt++;
-                    Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: sending Hello attempt {attempt}");
+                    Trace.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: sending Hello attempt {attempt}");
                     await SendHelloAsync();
                     try
                     {
@@ -129,19 +129,19 @@ namespace MC_Ref2207_NetSocketLib
                     }
                     catch (OperationCanceledException)
                     {
-                        Debug.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: senderTask canceled due to timeout/cancellation");
+                        Trace.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: senderTask canceled due to timeout/cancellation");
                         break;
                     }
                 }
 
-                Debug.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: senderTask finished");
+                Trace.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: senderTask finished");
             });
 
             bool success;
             // If timeout occurs, set handshake result to false. Also observe external cancellation.
             using (timeoutCts.Token.Register(() =>
             {
-                Debug.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: handshake timeout/cancellation triggered");
+                Trace.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: handshake timeout/cancellation triggered");
                 handshakeTcs.TrySetResult(false);
             }))
             {
@@ -167,11 +167,11 @@ namespace MC_Ref2207_NetSocketLib
 
             if (success)
             {
-                Debug.WriteLine("[Core.Network.ReliableChannel] Handshake succeeded; connection established.");
+                Trace.WriteLine("[Core.Network.ReliableChannel] Handshake succeeded; connection established.");
             }
             else
             {
-                Debug.WriteLine("[Core.Network.ReliableChannel] Handshake failed or canceled, reverting to Disconnected.");
+                Trace.WriteLine("[Core.Network.ReliableChannel] Handshake failed or canceled, reverting to Disconnected.");
             }
 
             // Останавливаем рассылку Hello сразу, не дожидаясь очередной паузы RetryDelayMs
@@ -233,7 +233,7 @@ namespace MC_Ref2207_NetSocketLib
                 if (outgoingPacket.Acked.Task.IsCompleted) return;
 
                 await SendRawAsync(bytes, packet.Type);
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Sent packet seq={packet.Sequence}, Type={packet.Type}, Attempt={attempt + 1}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Sent packet seq={packet.Sequence}, Type={packet.Type}, Attempt={attempt + 1}");
 
                 // Ждем подтверждения либо таймаута
                 try
@@ -255,7 +255,7 @@ namespace MC_Ref2207_NetSocketLib
             // строго по порядку и без этого пакета никогда не отдаст следующие, канал "завис" бы навсегда
             if (_sentPackets.TryRemove(packet.Sequence, out _))
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Failed to confirm packetSeq={packet.Sequence} after {MaxRetries} retries. Closing connection.");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Failed to confirm packetSeq={packet.Sequence} after {MaxRetries} retries. Closing connection.");
                 Close();
             }
         }
@@ -277,7 +277,7 @@ namespace MC_Ref2207_NetSocketLib
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Failed to send {type} packet, Error: {ex.Message}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Failed to send {type} packet, Error: {ex.Message}");
             }
         }
 
@@ -291,7 +291,7 @@ namespace MC_Ref2207_NetSocketLib
             try
             {
                 var packet = Packet.FromBytes(e.Data);
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Received packet " +
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Received packet " +
                     $"Seq={packet.Sequence}," +
                     $"Type={packet.Type}," +
                     $"Ack={packet.Acknowledgment}," +
@@ -318,17 +318,17 @@ namespace MC_Ref2207_NetSocketLib
                         // Достаточно обновления времени активности выше
                         break;
                     default:
-                        Debug.WriteLine($"[Core.Network.ReliableChannel] Unknown packet type: {packet.Type}");
+                        Trace.WriteLine($"[Core.Network.ReliableChannel] Unknown packet type: {packet.Type}");
                         break;
                 }
             }
             catch (ArgumentException ex)
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Invalid packet received: {ex.Message}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Invalid packet received: {ex.Message}");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Error processing received packet: {ex.Message}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Error processing received packet: {ex.Message}");
             }
         }
 
@@ -336,13 +336,13 @@ namespace MC_Ref2207_NetSocketLib
         {
             if (_sentPackets.TryRemove(ackSeq, out var outgoingPacket))
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] ACK received for Seq={ackSeq}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] ACK received for Seq={ackSeq}");
                 outgoingPacket.Acked.TrySetResult(); // Пакет успешно подтвержден
             }
             else
             {
                 // ACK для пакета который уже был подтвержден или никогда не отправлялся
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Duplicate or unexpected ACK for Seq={ackSeq}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Duplicate or unexpected ACK for Seq={ackSeq}");
             }
         }
 
@@ -368,7 +368,7 @@ namespace MC_Ref2207_NetSocketLib
             else if (packet.Sequence > _expectedRecvSeq)
             {
                 // Получен пакет с более высоким номером
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Out of order packet received Seq={packet.Sequence}, Expected={_expectedRecvSeq}. Buffering.");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Out of order packet received Seq={packet.Sequence}, Expected={_expectedRecvSeq}. Buffering.");
                 _receivedBuffer[packet.Sequence] = packet.Payload;
             }
             // else: packet.Sequence < _expectedRecvSeq -> дубликат, игнорируем (уже обработан)
@@ -378,7 +378,7 @@ namespace MC_Ref2207_NetSocketLib
         {
             var ackPacket = new Packet(Array.Empty<byte>(), 0, seqNum, PacketType.Ack); // Ack не содержит полезной нагрузки
             _ = SendRawAsync(ackPacket.ToBytes(), PacketType.Ack); // Не ждем завершения отправки Ack
-            Debug.WriteLine($"[Core.Network.ReliableChannel] Sent ACK for Seq={seqNum}");
+            Trace.WriteLine($"[Core.Network.ReliableChannel] Sent ACK for Seq={seqNum}");
         }
 
         private void EnqueueReceivedData(byte[] data)
@@ -398,7 +398,7 @@ namespace MC_Ref2207_NetSocketLib
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Core.Network.ReliableChannel] DataReceived handler threw exception: {ex}");
+                    Trace.WriteLine($"[Core.Network.ReliableChannel] DataReceived handler threw exception: {ex}");
                 }
             }
         }
@@ -428,7 +428,7 @@ namespace MC_Ref2207_NetSocketLib
             UpdatePeerSession(peerSession);
             if (_handshakeTcs?.TrySetResult(true) == true)
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Handshake complete, peerSession={_peerSessionId}");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Handshake complete, peerSession={_peerSessionId}");
             }
         }
 
@@ -439,7 +439,7 @@ namespace MC_Ref2207_NetSocketLib
             if (_peerSessionId != 0)
             {
                 // Партнёр переподключился с новой сессией — нумерация в обе стороны начинается заново
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Peer session changed {_peerSessionId} -> {incomingSession}, resetting sequences.");
+                Trace.WriteLine($"[Core.Network.ReliableChannel] Peer session changed {_peerSessionId} -> {incomingSession}, resetting sequences.");
                 _expectedRecvSeq = 0;
                 _receivedBuffer.Clear();
                 Interlocked.Exchange(ref _nextSendSeq, 0);
@@ -479,7 +479,7 @@ namespace MC_Ref2207_NetSocketLib
 
             if (Environment.TickCount64 - Interlocked.Read(ref _lastReceivedTicks) > InactivityTimeoutMs)
             {
-                Debug.WriteLine("[Core.Network.ReliableChannel] Inactivity detected, closing connection.");
+                Trace.WriteLine("[Core.Network.ReliableChannel] Inactivity detected, closing connection.");
                 Close();
                 return;
             }

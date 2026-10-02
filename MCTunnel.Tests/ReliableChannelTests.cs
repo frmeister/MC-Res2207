@@ -191,6 +191,31 @@ namespace MCTunnel.Tests
             Assert.Equal("привет", await received.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         }
 
+        // Сценарий Program.cs: одновременный пробой NAT, затем ReliableChannel на тех же сокетах
+        [Fact]
+        public async Task PunchThenReliableChannel_ExchangeData()
+        {
+            using var peerA = CreatePeer();
+            using var peerB = CreatePeer();
+
+            var punched = await Task.WhenAll(
+                NatTraversal.PunchAsync(peerA, peerB.LocalEndPoint!, TimeSpan.FromSeconds(5)),
+                NatTraversal.PunchAsync(peerB, peerA.LocalEndPoint!, TimeSpan.FromSeconds(5)));
+
+            using var channelA = new ReliableChannel(peerA);
+            using var channelB = new ReliableChannel(peerB);
+            var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            channelB.DataReceived += (_, data) => received.TrySetResult(Encoding.UTF8.GetString(data));
+
+            var connected = await Task.WhenAll(
+                channelA.ConnectAsync(punched[0]!),
+                channelB.ConnectAsync(punched[1]!));
+            Assert.All(connected, Assert.True);
+
+            await channelA.SendDataAsync(Encoding.UTF8.GetBytes("через пробитый NAT"));
+            Assert.Equal("через пробитый NAT", await received.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+
         [Fact]
         public async Task ConnectAsync_WithoutRemoteChannel_ReturnsFalseAfterTimeout()
         {

@@ -33,11 +33,23 @@ namespace MCTunnel.Core.Network
         public UdpPeer(int localPort)
         {
             _udpClient = new UdpClient(localPort);
+            DisableConnectionResetErrors(_udpClient);
         }
 
         public UdpPeer(IPEndPoint localEndpoint)
         {
             _udpClient = new UdpClient(localEndpoint);
+            DisableConnectionResetErrors(_udpClient);
+        }
+
+        // Windows: после ICMP "port unreachable" на отправленный пакет следующий ReceiveAsync падает с ConnectionReset (10054).
+        // При пробое NAT такие ICMP приходят постоянно (партнёр ещё не запустился), поэтому отключаем это поведение
+        private static void DisableConnectionResetErrors(UdpClient udpClient)
+        {
+            if (!OperatingSystem.IsWindows()) return;
+
+            const int SIO_UDP_CONNRESET = -1744830452; // _WSAIOW(IOC_VENDOR, 12)
+            udpClient.Client.IOControl(SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
         }
 
         // Send data to specific address
@@ -93,7 +105,7 @@ namespace MCTunnel.Core.Network
                     // Сокет был прерван, возможно, во время закрытия
                     if (!_disposed)
                     {
-                        Debug.WriteLine($"[Core.Network.Receive] Socket interrupted unexpectedly: {se}");
+                        Trace.WriteLine($"[Core.Network.Receive] Socket interrupted unexpectedly: {se}");
                     }
                     else
                     {
@@ -105,7 +117,7 @@ namespace MCTunnel.Core.Network
                 {
                     if (!_disposed) // Не выводим ошибку, если мы сами закрываемся
                     {
-                        Debug.WriteLine($"[Core.Network.Receive] Exception is thrown {ex}");
+                        Trace.WriteLine($"[Core.Network.Receive] Exception is thrown {ex}");
                     }
                     else
                     {
@@ -132,7 +144,7 @@ namespace MCTunnel.Core.Network
                 catch (Exception ex)
                 {
                     // Обработка исключения в обработчике события (опционально)
-                    Debug.WriteLine($"[Core.Network.OnDataReceived] Handler threw exception: {ex}");
+                    Trace.WriteLine($"[Core.Network.OnDataReceived] Handler threw exception: {ex}");
                 }
             }
         }
@@ -168,7 +180,7 @@ namespace MCTunnel.Core.Network
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Core.Network.Dispose] Error disposing UdpClient: {ex}");
+                    Trace.WriteLine($"[Core.Network.Dispose] Error disposing UdpClient: {ex}");
                 }
             }
         }

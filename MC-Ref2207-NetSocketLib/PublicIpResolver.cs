@@ -35,20 +35,20 @@ namespace MCTunnel.Core.PublicIp
                     }
                     else
                     {
-                        Debug.WriteLine($"[Core.PublicIp] Invalid IP format received from {url}: {trimmedResponse}");
+                        Trace.WriteLine($"[Core.PublicIp] Invalid IP format received from {url}: {trimmedResponse}");
                     }
                 }
                 catch (HttpRequestException hex)
                 {
-                    Debug.WriteLine($"[Core.PublicIp] HTTP error fetching IP from {url}: {hex.Message}");
+                    Trace.WriteLine($"[Core.PublicIp] HTTP error fetching IP from {url}: {hex.Message}");
                 }
                 catch (TaskCanceledException tcex)
                 {
-                    Debug.WriteLine($"[Core.PublicIp] Request timed out fetching IP from {url}: {tcex.Message}");
+                    Trace.WriteLine($"[Core.PublicIp] Request timed out fetching IP from {url}: {tcex.Message}");
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Core.PublicIp] Exception thrown while fetching IP from {url}: {ex}");
+                    Trace.WriteLine($"[Core.PublicIp] Exception thrown while fetching IP from {url}: {ex}");
                 }
             }
 
