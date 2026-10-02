@@ -4,18 +4,21 @@ using System;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 
 namespace MCTunnel.Core.PublicIp
 {
     public class PublicIpResolver
     {
-        private static readonly string[] Urls = { "https://api.ipify.org", "https://icanhazip.com", "https://ident.me" };
+        // Только IPv4-адреса сервисов: UdpPeer слушает IPv4, и IPv6-адрес второй стороне не поможет
+        private static readonly string[] Urls = { "https://api4.ipify.org", "https://ipv4.icanhazip.com", "https://v4.ident.me" };
         private readonly HttpClient _httpClient;
 
         public PublicIpResolver(HttpClient? httpClient = null)
         {
-            _httpClient = httpClient ?? new HttpClient();
+            // Стандартный таймаут HttpClient — 100 с: при недоступном сервисе программа "висела" бы перед переходом к следующему
+            _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         }
 
         public async Task<IPAddress?> GetPublicIpAddressAsync()
@@ -26,7 +29,7 @@ namespace MCTunnel.Core.PublicIp
                 {
                     var response = await _httpClient.GetStringAsync(url);
                     var trimmedResponse = response.Trim();
-                    if (IPAddress.TryParse(trimmedResponse, out var ipAddress))
+                    if (IPAddress.TryParse(trimmedResponse, out var ipAddress) && ipAddress.AddressFamily == AddressFamily.InterNetwork)
                     {
                         return ipAddress;
                     }

@@ -18,6 +18,7 @@
 
 using System;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 using MCTunnel.Core.Network;
@@ -45,13 +46,14 @@ namespace MinecraftTunnel.ConsoleHost
             }
 
             Console.Write("Локальный UDP-порт (например 50000): ");
-            if (!int.TryParse(Console.ReadLine(), out var localPort))
+            if (!int.TryParse(Console.ReadLine(), out var localPort) || localPort < 1 || localPort > IPEndPoint.MaxPort)
                 localPort = 50000;
 
             Console.WriteLine($"Сообщите второй стороне: ВАШ_ПУБЛИЧНЫЙ_IP:{localPort}");
             Console.WriteLine();
 
-            using var peer = new UdpPeer(localPort);
+            using var peer = TryOpenPeer(localPort);
+            if (peer == null) return;
             _ = Task.Run(() => peer.StartReceivingAsync());
 
             Console.Write("Кто вы — host или client? (host/client): ");
@@ -63,15 +65,32 @@ namespace MinecraftTunnel.ConsoleHost
             {
                 if (mode == "host")
                 {
-                    Console.WriteLine("Ожидаем подключение клиента...");
-                    remoteEndPoint = await NatTraversal.WaitForClientAsync(peer);
+                    Console.WriteLine("Ожидаем подключение клиента... (Ctrl+C — выход)");
+                    // Одно ожидание длится 10 секунд — человеку обычно нужно больше, чтобы ввести адрес на второй стороне
+                    while (true)
+                    {
+                        try
+                        {
+                            remoteEndPoint = await NatTraversal.WaitForClientAsync(peer);
+                            break;
+                        }
+                        catch (TimeoutException)
+                        {
+                            Console.WriteLine("Клиент пока не подключился, продолжаем ждать...");
+                        }
+                    }
                 }
                 else if (mode == "client")
                 {
                     Console.Write("IP второй стороны: ");
                     var ipStr = Console.ReadLine();
                     Console.Write("Порт второй стороны: ");
-                    int.TryParse(Console.ReadLine(), out var remotePort);
+                    if (!int.TryParse(Console.ReadLine(), out var remotePort) ||
+                        remotePort < 1 || remotePort > IPEndPoint.MaxPort)
+                    {
+                        Console.WriteLine("Некорректный порт.");
+                        return;
+                    }
 
                     if (!IPAddress.TryParse(ipStr, out var remoteIp))
                     {
@@ -115,21 +134,17 @@ namespace MinecraftTunnel.ConsoleHost
                 Console.Write("> ");
             };
 
-            // Connect() сейчас синхронный и блокирующий (busy-wait до 5 сек),
-            // поэтому уводим его в отдельный поток, чтобы не морозить консоль.
-            bool connected = await Task.Run(() =>
+            // Рукопожатие ждёт Hello второй стороны до 5 секунд
+            bool connected;
+            try
             {
-                try
-                {
-                    channel.ConnectAsync(remoteEndPoint);
-                    return channel.State == ConnectionState.Established;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Ошибка установления ReliableChannel: {ex.Message}");
-                    return false;
-                }
-            });
+                connected = await channel.ConnectAsync(remoteEndPoint);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка установления ReliableChannel: {ex.Message}");
+                connected = false;
+            }
 
             if (!connected)
             {
@@ -143,7 +158,14 @@ namespace MinecraftTunnel.ConsoleHost
             {
                 Console.Write("> ");
                 var line = Console.ReadLine();
-                if (string.IsNullOrEmpty(line)) continue;
+                if (line == null) break; // Ввод закрыт (Ctrl+Z / конец перенаправленного ввода)
+                if (line.Length == 0) continue;
+
+                if (channel.State != ConnectionState.Established)
+                {
+                    Console.WriteLine("Соединение закрыто (партнёр не отвечает).");
+                    break;
+                }
 
                 try
                 {
@@ -153,6 +175,20 @@ namespace MinecraftTunnel.ConsoleHost
                 {
                     Console.WriteLine($"Ошибка отправки: {ex.Message}");
                 }
+            }
+        }
+
+        private static UdpPeer? TryOpenPeer(int localPort)
+        {
+            try
+            {
+                return new UdpPeer(localPort);
+            }
+            catch (SocketException ex)
+            {
+                // Чаще всего порт уже занят другой программой
+                Console.WriteLine($"Не удалось открыть UDP-порт {localPort}: {ex.Message}");
+                return null;
             }
         }
     }

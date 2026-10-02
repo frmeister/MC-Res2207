@@ -12,18 +12,23 @@ namespace MC_Ref2207_NetSocketLib
     {
         Data = 0,
         Ack = 1,
-        Hello = 2
+        Hello = 2,     // Запрос рукопожатия: [sessionId отправителя]
+        HelloAck = 3,  // Ответ на Hello: [sessionId отправителя][sessionId из Hello]
+        KeepAlive = 4  // Поддержание соединения и NAT-маппинга, без нагрузки
     }
     public class Packet
     {
         // Архитектуру придумал ИИ, так что я мог неправильно понять идею этого класса
         // Скорее всего он нужен для формирования пакета, как его сборщик и декомпилятор пакета в одном лице
         // Структура пакета:
-        // 0 байт - data = 0, ack = 1
+        // 0 байт - тип пакета (PacketType)
         // 1-4: Sequence = int, big-endian
         // 5-8: Acknowledgement = int, big-endian
-        // 9-10: Payload length = short, big-endian
+        // 9-10: Payload length = ushort, big-endian
         // 11... Payload
+
+        // 65507 — максимальная полезная нагрузка UDP-датаграммы в IPv4, из неё вычитаем наш заголовок
+        public const int MaxPayloadSize = 65507 - PacketHeaderSizes.Total;
 
         public PacketType Type { get; }
         public int Sequence { get; }
@@ -39,7 +44,7 @@ namespace MC_Ref2207_NetSocketLib
             if (payload == null) throw new ArgumentNullException(nameof(payload));
 
             // Проверка размера нагрузки на превышение допустимой
-            if (payload.Length > ushort.MaxValue) throw new ArgumentException("Payload too large!", nameof(payload));
+            if (payload.Length > MaxPayloadSize) throw new ArgumentException("Payload too large!", nameof(payload));
 
             Payload = payload;
             Acknowledgment = ack;
@@ -75,8 +80,9 @@ namespace MC_Ref2207_NetSocketLib
                 var type = (PacketType)reader.ReadByte();
                 int seq = IPAddress.NetworkToHostOrder(reader.ReadInt32());
                 int ack = IPAddress.NetworkToHostOrder(reader.ReadInt32());
-                short len = IPAddress.NetworkToHostOrder(reader.ReadInt16());
-                if (len < 0 || len > data.Length - 11) throw new ArgumentException("Invalid payload length");
+                // Длина беззнаковая: без приведения к ushort значения больше 32767 становились отрицательными
+                int len = (ushort)IPAddress.NetworkToHostOrder(reader.ReadInt16());
+                if (len > data.Length - 11) throw new ArgumentException("Invalid payload length");
 
                 byte[] payload = reader.ReadBytes(len);
                 return new Packet(payload, seq, ack, type);
@@ -87,7 +93,7 @@ namespace MC_Ref2207_NetSocketLib
         // Дополнительно
         public override string ToString()
         {
-            return $"Packet(Type={Type}, Seq={Sequence}), Ack={Acknowledgment}, PayloadLen={Payload.Length}, Payload={Payload}";
+            return $"Packet(Type={Type}, Seq={Sequence}, Ack={Acknowledgment}, PayloadLen={Payload.Length})";
         }
 
         // Константы размерности заголовка

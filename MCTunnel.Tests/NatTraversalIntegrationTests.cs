@@ -66,21 +66,50 @@ namespace MCTunnel.Tests
             Assert.False(connected, "Client should not have connected to non-existent host.");
         }
 
-        // Этот тест НЕЛЬЗЯ выполнить с текущей сигнатурой NatTraversal.WaitForClientAsync,
-        // потому что он не принимает CancellationToken.
-        // [Fact]
-        // public async Task WaitForClientAsync_Cancelled_ThrowsOperationCanceledException()
-        // {
-        //     // Arrange
-        //     using var hostPeer = new UdpPeer(50024);
-        //     var receiveTask = Task.Run(async () => await hostPeer.StartReceivingAsync());
+        [Fact]
+        public async Task WaitForClientAsync_Cancelled_ThrowsOperationCanceledException()
+        {
+            // Arrange
+            using var hostPeer = new UdpPeer(50024);
+            var receiveTask = Task.Run(async () => await hostPeer.StartReceivingAsync());
 
-        //     using var cts = new CancellationTokenSource();
-        //     cts.CancelAfter(2000); // Отмена через 2 секунды
+            using var cts = new CancellationTokenSource();
+            cts.CancelAfter(500);
 
-        //     // Act & Assert
-        //     // Требуется изменить NatTraversal.WaitForClientAsync, чтобы он принимал CancellationToken
-        //     await Assert.ThrowsAsync<OperationCanceledException>(async () => await NatTraversal.WaitForClientAsync(hostPeer, cts.Token));
-        // }
+            // Act & Assert (TaskCanceledException — наследник OperationCanceledException)
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await NatTraversal.WaitForClientAsync(hostPeer, cts.Token));
+        }
+
+        // Если первый ACK потерялся, клиент шлёт HELLO повторно — хост должен ответить и на него
+        [Fact]
+        public async Task WaitForClientAsync_RepeatedHello_IsAcknowledgedAgain()
+        {
+            using var hostPeer = new UdpPeer(50025);
+            using var clientPeer = new UdpPeer(50026);
+            _ = Task.Run(() => hostPeer.StartReceivingAsync());
+            _ = Task.Run(() => clientPeer.StartReceivingAsync());
+
+            int ackCount = 0;
+            clientPeer.DataReceived += (_, e) =>
+            {
+                if (System.Text.Encoding.ASCII.GetString(e.Data) == "ACK") Interlocked.Increment(ref ackCount);
+            };
+
+            var hostEndPoint = new IPEndPoint(IPAddress.Loopback, 50025);
+            var hello = System.Text.Encoding.ASCII.GetBytes("HELLO");
+            var waitForClientTask = NatTraversal.WaitForClientAsync(hostPeer);
+
+            await clientPeer.SendToAsync(hello, hostEndPoint);
+            await waitForClientTask.WaitAsync(TimeSpan.FromSeconds(5));
+            await clientPeer.SendToAsync(hello, hostEndPoint); // будто первый ACK не дошёл
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            while (Volatile.Read(ref ackCount) < 2 && stopwatch.ElapsedMilliseconds < 2000)
+            {
+                await Task.Delay(20);
+            }
+
+            Assert.Equal(2, Volatile.Read(ref ackCount));
+        }
     }
 }

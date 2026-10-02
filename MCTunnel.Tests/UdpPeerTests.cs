@@ -1,59 +1,59 @@
-// MCTunnel.Tests/UdpPeerTests.cs
+п»ї// MCTunnel.Tests/UdpPeerTests.cs
 
 using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using MCTunnel.Core.Network;
-using Xunit; // Подключаем xUnit
+using Xunit; // РџРѕРґРєР»СЋС‡Р°РµРј xUnit
 
 namespace MCTunnel.Tests
 {
     public class UdpPeerTests
     {
-        // Тест для проверки отправки и получения данных между двумя UdpPeer
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё РѕС‚РїСЂР°РІРєРё Рё РїРѕР»СѓС‡РµРЅРёСЏ РґР°РЅРЅС‹С… РјРµР¶РґСѓ РґРІСѓРјСЏ UdpPeer
         [Fact]
         public async Task SendToAsync_WhenDataSent_ReceivesData()
         {
-            // Arrange (Подготовка)
-            var receivedData = new byte[0]; // Переменная для хранения полученных данных
-            var receivedFrom = (IPEndPoint)null; // Переменная для хранения адреса отправителя
-            var signal = new TaskCompletionSource<bool>(); // Для синхронизации получения
+            // Arrange (РџРѕРґРіРѕС‚РѕРІРєР°)
+            var receivedData = new byte[0]; // РџРµСЂРµРјРµРЅРЅР°СЏ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РїРѕР»СѓС‡РµРЅРЅС‹С… РґР°РЅРЅС‹С…
+            var receivedFrom = (IPEndPoint)null; // РџРµСЂРµРјРµРЅРЅР°СЏ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ Р°РґСЂРµСЃР° РѕС‚РїСЂР°РІРёС‚РµР»СЏ
+            var signal = new TaskCompletionSource<bool>(); // Р”Р»СЏ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё РїРѕР»СѓС‡РµРЅРёСЏ
 
             int port1 = 50001;
             int port2 = 50002;
 
-            using var peer1 = new UdpPeer(port1); // Peer, который отправляет
-            using var peer2 = new UdpPeer(port2); // Peer, который принимает
+            using var peer1 = new UdpPeer(port1); // Peer, РєРѕС‚РѕСЂС‹Р№ РѕС‚РїСЂР°РІР»СЏРµС‚
+            using var peer2 = new UdpPeer(port2); // Peer, РєРѕС‚РѕСЂС‹Р№ РїСЂРёРЅРёРјР°РµС‚
 
-            // Подписываемся на событие получения данных у peer2
+            // РџРѕРґРїРёСЃС‹РІР°РµРјСЃСЏ РЅР° СЃРѕР±С‹С‚РёРµ РїРѕР»СѓС‡РµРЅРёСЏ РґР°РЅРЅС‹С… Сѓ peer2
             peer2.DataReceived += (sender, args) =>
             {
                 receivedData = args.Data;
                 receivedFrom = args.RemoteEndPoint;
-                signal.SetResult(true); // Сообщаем, что данные получены
+                signal.SetResult(true); // РЎРѕРѕР±С‰Р°РµРј, С‡С‚Рѕ РґР°РЅРЅС‹Рµ РїРѕР»СѓС‡РµРЅС‹
             };
 
-            // Запускаем получение на peer2 в фоне
+            // Р—Р°РїСѓСЃРєР°РµРј РїРѕР»СѓС‡РµРЅРёРµ РЅР° peer2 РІ С„РѕРЅРµ
             var receiveTask = Task.Run(async () => await peer2.StartReceivingAsync());
 
             byte[] testData = System.Text.Encoding.UTF8.GetBytes("Hello from Peer1!");
             var targetEndpoint = new IPEndPoint(IPAddress.Loopback, port2); // Peer2's address
 
-            // Act (Действие)
+            // Act (Р”РµР№СЃС‚РІРёРµ)
             await peer1.SendToAsync(testData, targetEndpoint);
 
-            // Assert (Проверка)
-            // Ждём, пока данные не будут получены (с таймаутом)
-            var completedTask = await Task.WhenAny(signal.Task, Task.Delay(2000)); // Таймаут 2 секунды
+            // Assert (РџСЂРѕРІРµСЂРєР°)
+            // Р–РґС‘Рј, РїРѕРєР° РґР°РЅРЅС‹Рµ РЅРµ Р±СѓРґСѓС‚ РїРѕР»СѓС‡РµРЅС‹ (СЃ С‚Р°Р№РјР°СѓС‚РѕРј)
+            var completedTask = await Task.WhenAny(signal.Task, Task.Delay(2000)); // РўР°Р№РјР°СѓС‚ 2 СЃРµРєСѓРЅРґС‹
             Assert.True(completedTask == signal.Task, "Data was not received within the timeout.");
 
-            Assert.Equal(testData, receivedData); // Проверяем, что полученные данные совпадают
-            Assert.NotNull(receivedFrom); // Проверяем, что адрес отправителя не null
-            Assert.Equal(port1, receivedFrom.Port); // Проверяем, что данные пришли с правильного порта peer1
+            Assert.Equal(testData, receivedData); // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РїРѕР»СѓС‡РµРЅРЅС‹Рµ РґР°РЅРЅС‹Рµ СЃРѕРІРїР°РґР°СЋС‚
+            Assert.NotNull(receivedFrom); // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ Р°РґСЂРµСЃ РѕС‚РїСЂР°РІРёС‚РµР»СЏ РЅРµ null
+            Assert.Equal(port1, receivedFrom.Port); // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РґР°РЅРЅС‹Рµ РїСЂРёС€Р»Рё СЃ РїСЂР°РІРёР»СЊРЅРѕРіРѕ РїРѕСЂС‚Р° peer1
         }
 
-        // Тест для проверки метода SetRemoteEndPoint и SendAsync (без указания адреса)
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё РјРµС‚РѕРґР° SetRemoteEndPoint Рё SendAsync (Р±РµР· СѓРєР°Р·Р°РЅРёСЏ Р°РґСЂРµСЃР°)
         [Fact]
         public async Task SendAsync_WithRemoteEndPointSet_SendsData()
         {
@@ -65,8 +65,8 @@ namespace MCTunnel.Tests
             int port1 = 50003;
             int port2 = 50004;
 
-            using var peer1 = new UdpPeer(port1); // Peer, который отправляет
-            using var peer2 = new UdpPeer(port2); // Peer, который принимает
+            using var peer1 = new UdpPeer(port1); // Peer, РєРѕС‚РѕСЂС‹Р№ РѕС‚РїСЂР°РІР»СЏРµС‚
+            using var peer2 = new UdpPeer(port2); // Peer, РєРѕС‚РѕСЂС‹Р№ РїСЂРёРЅРёРјР°РµС‚
 
             peer2.DataReceived += (sender, args) =>
             {
@@ -80,11 +80,11 @@ namespace MCTunnel.Tests
             byte[] testData = System.Text.Encoding.UTF8.GetBytes("Hello via SetRemoteEndPoint!");
             var targetEndpoint = new IPEndPoint(IPAddress.Loopback, port2);
 
-            // Устанавливаем удалённый адрес для peer1
+            // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј СѓРґР°Р»С‘РЅРЅС‹Р№ Р°РґСЂРµСЃ РґР»СЏ peer1
             peer1.SetRemoteEndPoint(targetEndpoint);
 
             // Act
-            await peer1.SendAsync(testData); // Отправляем без указания адреса
+            await peer1.SendAsync(testData); // РћС‚РїСЂР°РІР»СЏРµРј Р±РµР· СѓРєР°Р·Р°РЅРёСЏ Р°РґСЂРµСЃР°
 
             // Assert
             var completedTask = await Task.WhenAny(signal.Task, Task.Delay(2000));
@@ -95,7 +95,7 @@ namespace MCTunnel.Tests
             Assert.Equal(port1, receivedFrom.Port);
         }
 
-        // Тест для проверки LocalPort
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё LocalPort
         [Fact]
         public void LocalPort_ReturnsCorrectPort()
         {
@@ -107,7 +107,7 @@ namespace MCTunnel.Tests
             Assert.Equal(expectedPort, peer.LocalPort);
         }
 
-        // Тест для проверки LocalEndPoint
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё LocalEndPoint
         [Fact]
         public void LocalEndPoint_ReturnsCorrectEndPoint()
         {
@@ -121,29 +121,29 @@ namespace MCTunnel.Tests
             // Assert
             Assert.NotNull(localEndPoint);
             Assert.Equal(expectedPort, localEndPoint.Port);
-            // Можно также проверить IP, но он может быть 0.0.0.0 или 127.0.0.1 в зависимости от конфигурации
+            // РњРѕР¶РЅРѕ С‚Р°РєР¶Рµ РїСЂРѕРІРµСЂРёС‚СЊ IP, РЅРѕ РѕРЅ РјРѕР¶РµС‚ Р±С‹С‚СЊ 0.0.0.0 РёР»Рё 127.0.0.1 РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РєРѕРЅС„РёРіСѓСЂР°С†РёРё
         }
 
-        // Тест для проверки Dispose
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё Dispose
         [Fact]
         public async Task Dispose_ClosesUdpClient()
         {
             // Arrange
-            using var peer = new UdpPeer(50007); // Используем using, он вызовет Dispose
+            using var peer = new UdpPeer(50007); // РСЃРїРѕР»СЊР·СѓРµРј using, РѕРЅ РІС‹Р·РѕРІРµС‚ Dispose
             var client = peer.GetType().GetField("_udpClient", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(peer) as UdpClient;
             Assert.NotNull(client);
-            Assert.False(client.Client.Connected); // UdpClient.Client.Connected не всегда показывает открытость, но можно проверить состояние
+            Assert.False(client.Client.Connected); // UdpClient.Client.Connected РЅРµ РІСЃРµРіРґР° РїРѕРєР°Р·С‹РІР°РµС‚ РѕС‚РєСЂС‹С‚РѕСЃС‚СЊ, РЅРѕ РјРѕР¶РЅРѕ РїСЂРѕРІРµСЂРёС‚СЊ СЃРѕСЃС‚РѕСЏРЅРёРµ
             Assert.Equal(System.Net.Sockets.SocketType.Dgram, client.Client.SocketType);
 
             // Act
-            peer.Dispose(); // Явный вызов Dispose, хотя using уже вызовет его
+            peer.Dispose(); // РЇРІРЅС‹Р№ РІС‹Р·РѕРІ Dispose, С…РѕС‚СЏ using СѓР¶Рµ РІС‹Р·РѕРІРµС‚ РµРіРѕ
 
             // Assert
-            // Проверить, что сокет закрыт, можно попытавшись выполнить операцию
+            // РџСЂРѕРІРµСЂРёС‚СЊ, С‡С‚Рѕ СЃРѕРєРµС‚ Р·Р°РєСЂС‹С‚, РјРѕР¶РЅРѕ РїРѕРїС‹С‚Р°РІС€РёСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ РѕРїРµСЂР°С†РёСЋ
             await Assert.ThrowsAsync<ObjectDisposedException>(async () => await peer.SendToAsync(new byte[1], new IPEndPoint(IPAddress.Loopback, 50008)));
         }
 
-        // Тест для проверки, что SendAsync выбрасывает исключение, если RemoteEndPoint не установлен
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё, С‡С‚Рѕ SendAsync РІС‹Р±СЂР°СЃС‹РІР°РµС‚ РёСЃРєР»СЋС‡РµРЅРёРµ, РµСЃР»Рё RemoteEndPoint РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ
         [Fact]
         public async Task SendAsync_WithoutRemoteEndPoint_ThrowsInvalidOperationException()
         {
@@ -155,7 +155,7 @@ namespace MCTunnel.Tests
             await Assert.ThrowsAsync<InvalidOperationException>(() => peer.SendAsync(testData));
         }
 
-        // Тест для проверки, что SendToAsync и SendAsync выбрасывают исключение, если передан null
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё, С‡С‚Рѕ SendToAsync Рё SendAsync РІС‹Р±СЂР°СЃС‹РІР°СЋС‚ РёСЃРєР»СЋС‡РµРЅРёРµ, РµСЃР»Рё РїРµСЂРµРґР°РЅ null
         [Fact]
         public async Task SendMethods_WithNullData_ThrowArgumentNullException()
         {
@@ -168,7 +168,7 @@ namespace MCTunnel.Tests
             await Assert.ThrowsAsync<ArgumentNullException>(() => peer.SendAsync(null));
         }
 
-        // Тест для проверки, что SetRemoteEndPoint выбрасывает исключение, если передан null
+        // РўРµСЃС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё, С‡С‚Рѕ SetRemoteEndPoint РІС‹Р±СЂР°СЃС‹РІР°РµС‚ РёСЃРєР»СЋС‡РµРЅРёРµ, РµСЃР»Рё РїРµСЂРµРґР°РЅ null
         [Fact]
         public void SetRemoteEndPoint_WithNullEndPoint_ThrowsArgumentNullException()
         {
