@@ -22,7 +22,8 @@ namespace MC_Ref2207_NetSocketLib
         private const int InactivityTimeoutMs = 30000;
 
         // -- Состояния и зависимости --
-        private ConnectionState _state = ConnectionState.Disconnected;
+        private volatile ConnectionState _state = ConnectionState.Disconnected;
+        private volatile TaskCompletionSource<bool>? _handshakeTcs; // Сигнал от HandleHello о завершении рукопожатия
         private readonly object _stateLock = new object(); // Объект для синхронизации
         private readonly UdpPeer _udpPeer;
         private IPEndPoint? _remoteEndPoint;
@@ -62,73 +63,61 @@ namespace MC_Ref2207_NetSocketLib
         public ConnectionState State => _state;
 
         // -- Управление соединением --
-        public void Connect(IPEndPoint remoteEndPoint)
+        public async Task<bool> ConnectAsync(IPEndPoint remoteEndPoint, CancellationToken cancellationToken = default)
         {
             if (_state != ConnectionState.Disconnected)
             {
                 throw new InvalidOperationException($"Cannot connect while in state: {_state}");
             }
 
-            // Validate endpoint
             _remoteEndPoint = remoteEndPoint ?? throw new ArgumentNullException(nameof(remoteEndPoint));
 
-            // Ensure we have a non-zero session id to identify this side during handshake
             if (_sessionId == 0)
             {
                 _sessionId = Environment.TickCount ^ Guid.NewGuid().GetHashCode();
             }
 
-            // Enter connecting state
-            lock (_stateLock)
-            {
-                _state = ConnectionState.Connecting;
-            }
+            lock (_stateLock) { _state = ConnectionState.Connecting; }
 
             Debug.WriteLine($"[Core.Network.ReliableChannel] Starting handshake with {_remoteEndPoint}, session={_sessionId}");
 
-            // Send an initial Hello immediately. The incoming Hello from peer will be processed
-            // in OnUdpDataReceived -> HandleHello which sets _state = Established when appropriate.
-            _ = SendHelloAsync();
+            var handshakeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _handshakeTcs = handshakeTcs;
 
-            // Try a few times to solicit a Hello from the peer. We keep Connect synchronous to avoid
-            // changing other code; this is a simple polling loop that repeatedly sends Hello and
-            // waits a short interval for the peer to respond. If HandleHello runs it will set
-            // _state to Established and we will stop retrying.
-            for (int attempt = 0; attempt < MaxRetries && _state == ConnectionState.Connecting; attempt++)
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(MaxRetries * RetryDelayMs)); // Таймаут на рукопожатие
+            
+            var senderTask = Task.Run(async () =>
             {
-                Debug.WriteLine($"[Core.Network.ReliableChannel] Hello sent (attempt {attempt + 1}/{MaxRetries})");
-
-                // Send another hello to increase chance of punch-through
-                _ = SendHelloAsync();
-
-                // Wait up to RetryDelayMs for the peer to reply. Small sleeps to yield CPU.
-                var waitUntil = DateTime.UtcNow.AddMilliseconds(RetryDelayMs);
-                while (DateTime.UtcNow < waitUntil && _state == ConnectionState.Connecting)
+                while (!handshakeTcs.Task.IsCompleted && !timeoutCts.IsCancellationRequested)
                 {
-                    Thread.Sleep(50);
+                    await SendHelloAsync();
+                    try { await Task.Delay(RetryDelayMs, timeoutCts.Token); }
+                    catch (OperationCanceledException) { break; }
                 }
-            }
+            });
 
-            if (_state == ConnectionState.Established)
+            using (timeoutCts.Token.Register(() => handshakeTcs.TrySetResult(false)))
             {
-                Debug.WriteLine("[Core.Network.ReliableChannel] Handshake succeeded; connection established.");
+                bool success = await handshakeTcs.Task;
 
-                // Start inactivity timer only after established
-                _inactivityTimer.Change(InactivityTimeoutMs, InactivityTimeoutMs);
-
-                // Keep current behavior: connection is established and ready for data sending.
-            }
-            else
-            {
-                // Handshake failed within retry window. Revert to Disconnected to preserve existing logic.
-                Debug.WriteLine("[Core.Network.ReliableChannel] Handshake failed, reverting to Disconnected.");
                 lock (_stateLock)
                 {
-                    _state = ConnectionState.Disconnected;
+                    _state = success ? ConnectionState.Established : ConnectionState.Disconnected;
                 }
 
-                // Do not start inactivity timer and do not mark Established; caller may retry Connect().
-                return;
+                if (success)
+                {
+                    Debug.WriteLine("[Core.Network.ReliableChannel] Handshake succeeded; connection established.");
+                    _inactivityTimer.Change(InactivityTimeoutMs, InactivityTimeoutMs);
+                }
+                else
+                {
+                    Debug.WriteLine("[Core.Network.ReliableChannel] Handshake failed, reverting to Disconnected.");
+                }
+
+                _handshakeTcs = null;
+                return success;
             }
         }
 
@@ -367,7 +356,7 @@ namespace MC_Ref2207_NetSocketLib
             }
         }
 
-        private async Task HandleHello(Packet packet)
+        private void HandleHello(Packet packet)
         {
             if (packet.Payload.Length < 4) return;
 
@@ -377,8 +366,8 @@ namespace MC_Ref2207_NetSocketLib
             {
                 // Первый Hello от партнера - фиксируем его sessionId и отвечаем
                 _peerSessionId = incomingSession;
-                SendHelloAsync();
-                _state = ConnectionState.Established;
+                _ = SendHelloAsync();
+                _handshakeTcs?.TrySetResult(true);
                 Debug.WriteLine($"[ReliableChannel] Handshake complete, peerSession={_peerSessionId}");
             }
             else if (_state == ConnectionState.Established)
@@ -391,7 +380,7 @@ namespace MC_Ref2207_NetSocketLib
                     _expectedRecvSeq = 0;
                     _receivedBuffer.Clear();
                 }
-                SendHelloAsync();
+                _ = SendHelloAsync();
             }
         }
 

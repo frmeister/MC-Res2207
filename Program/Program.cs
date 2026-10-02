@@ -1,10 +1,28 @@
-﻿// MinecraftTunnel.ConsoleHost/Program.cs
+﻿// Program/Program.cs
+// Простой ручной тест: NAT traversal + ReliableChannel между двумя реальными машинами.
+//
+// Как использовать:
+// 1. Запустить программу на ОБЕИХ машинах.
+// 2. Каждая сторона увидит свой публичный IP и спросит локальный UDP-порт.
+//    Сообщите друг другу (голосом/в чате) пару "ваш публичный IP : выбранный порт".
+// 3. Одна сторона выбирает режим "host", вторая — "client".
+//    "client" вводит IP:порт стороны "host".
+// 4. Если NAT пробит — откроется простой текстовый чат через ReliableChannel.
+//
+// ВАЖНО (ограничения текущей реализации):
+// - Это НЕ STUN: если ваш роутер подменяет внешний порт (symmetric NAT),
+//   punching может не сработать — тогда нужен проброс порта на роутере
+//   на заранее известный localPort.
+// - Проверьте, что localPort не блокируется файрволом (разрешить исходящий
+//   и входящий UDP на этот порт).
 
 using System;
 using System.Net;
+using System.Text;
 using System.Threading.Tasks;
 using MCTunnel.Core.Network;
 using MCTunnel.Core.PublicIp;
+using MC_Ref2207_NetSocketLib;
 
 namespace MinecraftTunnel.ConsoleHost
 {
@@ -12,124 +30,129 @@ namespace MinecraftTunnel.ConsoleHost
     {
         static async Task Main(string[] args)
         {
-            Console.WriteLine("Minecraft Tunnel Console Host");
+            Console.WriteLine("=== MC Tunnel: тест P2P через NAT ===");
 
-            // Тест получения публичного IP
+            // 1. Узнаём свой публичный IP — его нужно продиктовать второй стороне
             try
             {
                 var ipResolver = new PublicIpResolver();
                 var publicIp = await ipResolver.GetPublicIpAddressAsync();
-                Console.WriteLine($"Public IP: {publicIp}");
+                Console.WriteLine($"Ваш публичный IP: {publicIp}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Could not get public IP: {ex.Message}");
+                Console.WriteLine($"Не удалось получить публичный IP: {ex.Message}");
             }
 
-            Console.WriteLine("Choose mode: 'host' or 'client'?");
-            var mode = Console.ReadLine()?.ToLower();
+            Console.Write("Локальный UDP-порт (например 50000): ");
+            if (!int.TryParse(Console.ReadLine(), out var localPort))
+                localPort = 50000;
 
-            switch (mode)
-            {
-                case "host":
-                    await RunAsHost();
-                    break;
-                case "client":
-                    await RunAsClient();
-                    break;
-                default:
-                    Console.WriteLine("Invalid mode. Exiting.");
-                    break;
-            }
+            Console.WriteLine($"Сообщите второй стороне: ВАШ_ПУБЛИЧНЫЙ_IP:{localPort}");
+            Console.WriteLine();
 
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
-        }
+            using var peer = new UdpPeer(localPort);
+            _ = Task.Run(() => peer.StartReceivingAsync());
 
-        static async Task RunAsHost()
-        {
-            Console.WriteLine("Running as Host...");
-            Console.WriteLine("Enter local port for UdpPeer (default 50000): ");
-            if (!int.TryParse(Console.ReadLine(), out var port))
-                port = 50000;
+            Console.Write("Кто вы — host или client? (host/client): ");
+            var mode = Console.ReadLine()?.Trim().ToLower();
 
-            using var peer = new UdpPeer(port);
-            Console.WriteLine($"Listening on port {port}...");
-
-            // Запускаем прием данных в фоне
-            var receiveTask = Task.Run(async () => await peer.StartReceivingAsync());
+            IPEndPoint? remoteEndPoint;
 
             try
             {
-                var clientEndPoint = await NatTraversal.WaitForClientAsync(peer);
-                if (clientEndPoint != null)
+                if (mode == "host")
                 {
-                    Console.WriteLine($"Connected to client at {clientEndPoint}");
-                    // Здесь можно запустить TcpProxy и ReliableChannel
-                    // Пока просто ждем
-                    Console.WriteLine("Connected. Waiting for messages... Press Enter to stop.");
-                    Console.ReadLine();
+                    Console.WriteLine("Ожидаем подключение клиента...");
+                    remoteEndPoint = await NatTraversal.WaitForClientAsync(peer);
+                }
+                else if (mode == "client")
+                {
+                    Console.Write("IP второй стороны: ");
+                    var ipStr = Console.ReadLine();
+                    Console.Write("Порт второй стороны: ");
+                    int.TryParse(Console.ReadLine(), out var remotePort);
+
+                    if (!IPAddress.TryParse(ipStr, out var remoteIp))
+                    {
+                        Console.WriteLine("Некорректный IP.");
+                        return;
+                    }
+
+                    remoteEndPoint = new IPEndPoint(remoteIp, remotePort);
+                    bool punched = await NatTraversal.ConnectToHostAsync(peer, remoteEndPoint);
+                    if (!punched)
+                    {
+                        Console.WriteLine("Не удалось пробить NAT (timeout).");
+                        return;
+                    }
                 }
                 else
                 {
-                    Console.WriteLine("Failed to connect to client (timeout).");
+                    Console.WriteLine("Неизвестный режим.");
+                    return;
                 }
             }
-            catch (TimeoutException tex)
+            catch (TimeoutException)
             {
-                Console.WriteLine(tex.Message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Host setup failed: {ex.Message}");
-            }
-        }
-
-        static async Task RunAsClient()
-        {
-            Console.WriteLine("Running as Client...");
-            Console.Write("Enter host IP address: ");
-            var hostIpStr = Console.ReadLine();
-            if (!IPAddress.TryParse(hostIpStr, out var hostIp))
-            {
-                Console.WriteLine("Invalid IP address.");
+                Console.WriteLine("Timeout: вторая сторона не ответила за отведённое время.");
                 return;
             }
-            Console.Write("Enter host port (default 50000): ");
-            if (!int.TryParse(Console.ReadLine(), out var hostPort))
-                hostPort = 50000;
 
-            var hostEndPoint = new IPEndPoint(hostIp, hostPort);
-
-            Console.WriteLine("Enter local port for UdpPeer (default 50001): ");
-            if (!int.TryParse(Console.ReadLine(), out var port))
-                port = 50001;
-
-            using var peer = new UdpPeer(port);
-            Console.WriteLine($"Using local port {port}...");
-
-            // Запускаем прием данных в фоне
-            var receiveTask = Task.Run(async () => await peer.StartReceivingAsync());
-
-            try
+            if (remoteEndPoint == null)
             {
-                bool connected = await NatTraversal.ConnectToHostAsync(peer, hostEndPoint);
-                if (connected)
-                {
-                    Console.WriteLine($"Connected to host at {hostEndPoint}");
-                    // Здесь можно запустить TcpProxy и ReliableChannel
-                    // Пока просто ждем
-                    Console.WriteLine("Connected. Waiting for messages... Press Enter to stop.");
-                    Console.ReadLine();
-                }
-                else
-                {
-                    Console.WriteLine("Failed to connect to host (timeout).");
-                }
+                Console.WriteLine("Не удалось установить соединение.");
+                return;
             }
-            catch (Exception ex)
+
+            Console.WriteLine($"NAT пробит, партнёр: {remoteEndPoint}");
+
+            // 2. Поднимаем надёжный канал поверх пробитого UDP-соединения
+            using var channel = new ReliableChannel(peer);
+            channel.DataReceived += (_, data) =>
             {
-                Console.WriteLine($"Client connection failed: {ex.Message}");
+                Console.WriteLine($"\n[Партнёр]: {Encoding.UTF8.GetString(data)}");
+                Console.Write("> ");
+            };
+
+            // Connect() сейчас синхронный и блокирующий (busy-wait до 5 сек),
+            // поэтому уводим его в отдельный поток, чтобы не морозить консоль.
+            bool connected = await Task.Run(() =>
+            {
+                try
+                {
+                    channel.ConnectAsync(remoteEndPoint);
+                    return channel.State == ConnectionState.Established;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка установления ReliableChannel: {ex.Message}");
+                    return false;
+                }
+            });
+
+            if (!connected)
+            {
+                Console.WriteLine("ReliableChannel не установился (Hello от партнёра не пришёл).");
+                return;
+            }
+
+            Console.WriteLine("Канал установлен. Пишите сообщения, Ctrl+C — выход.\n");
+
+            while (true)
+            {
+                Console.Write("> ");
+                var line = Console.ReadLine();
+                if (string.IsNullOrEmpty(line)) continue;
+
+                try
+                {
+                    await channel.SendDataAsync(Encoding.UTF8.GetBytes(line));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка отправки: {ex.Message}");
+                }
             }
         }
     }
