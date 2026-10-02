@@ -103,7 +103,11 @@ namespace ConnectTogether.App.ViewModels
         private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
         private DateTime _stageStart = DateTime.Now;
         private CancellationTokenSource? _cts;
+        private const int ShowMyAddressAfterSeconds = 8;
+        private readonly DispatcherTimer _copiedTimer = new() { Interval = TimeSpan.FromSeconds(1.8) };
         private RoomInfo? _room;
+        private string? _myAddress;
+        private bool _isCopied;
         private bool _isPreview;
 
         public ConnectingViewModel(ShellViewModel shell, string address)
@@ -117,7 +121,13 @@ namespace ConnectTogether.App.ViewModels
                 new ConnectStep("Готово", isLast: true),
             };
             _timer.Tick += (_, _) => Tick();
+            _copiedTimer.Tick += (_, _) =>
+            {
+                _copiedTimer.Stop();
+                IsCopied = false;
+            };
             CancelCommand = new RelayCommand(Cancel);
+            CopyMyAddressCommand = new RelayCommand(CopyMyAddress);
         }
 
         public string Address { get; }
@@ -140,11 +150,30 @@ namespace ConnectTogether.App.ViewModels
             {
                 int s = (int)(DateTime.Now - _stageStart).TotalSeconds;
                 string passed = RussianText.Plural(s, $"Прошла {s} секунда", $"Прошли {s} секунды", $"Прошло {s} секунд");
-                return $"{passed} · обычно занимает до {UsualSeconds}";
+                return s <= UsualSeconds ? $"{passed} · обычно занимает до {UsualSeconds}" : $"{passed} · ждём хоста до 2 минут";
             }
         }
 
+        /// <summary>Свой внешний адрес: если сеть хоста не пропускает входящие, хост впускает игрока по нему.</summary>
+        public string? MyAddress => _myAddress;
+
+        /// <summary>Хост долго молчит — предлагаем отправить ему свой адрес.</summary>
+        public bool ShowMyAddress => _myAddress != null && Steps[1].State == StepState.Active &&
+                                     (DateTime.Now - _stageStart).TotalSeconds >= ShowMyAddressAfterSeconds;
+
+        public bool IsCopied
+        {
+            get => _isCopied;
+            private set
+            {
+                if (Set(ref _isCopied, value)) OnPropertyChanged(nameof(CopyLabel));
+            }
+        }
+
+        public string CopyLabel => IsCopied ? "Скопировано" : "Скопировать";
+
         public ICommand CancelCommand { get; }
+        public ICommand CopyMyAddressCommand { get; }
 
         public void OnNavigatedTo()
         {
@@ -166,6 +195,11 @@ namespace ConnectTogether.App.ViewModels
 
             var progress = new Progress<JoinProgress>(p =>
             {
+                if (p.MyAddress != null && _myAddress == null)
+                {
+                    _myAddress = p.MyAddress;
+                    OnPropertyChanged(nameof(MyAddress));
+                }
                 if (p.Room != null && _room == null)
                 {
                     _room = p.Room;
@@ -217,7 +251,7 @@ namespace ConnectTogether.App.ViewModels
                         _shell.Navigate(StateViewModel.NoInternet(_shell, Address, ex.Details));
                         break;
                     default:
-                        _shell.Navigate(StateViewModel.NoAnswer(_shell, Address, ex.Details));
+                        _shell.Navigate(StateViewModel.NoAnswer(_shell, Address, ex.Details, ex.MyAddress ?? _myAddress));
                         break;
                 }
             }
@@ -231,6 +265,15 @@ namespace ConnectTogether.App.ViewModels
         {
             OnPropertyChanged(nameof(Progress));
             OnPropertyChanged(nameof(ElapsedText));
+            OnPropertyChanged(nameof(ShowMyAddress));
+        }
+
+        private void CopyMyAddress()
+        {
+            if (_myAddress == null || !AppServices.CopyToClipboard(_myAddress)) return;
+            IsCopied = true;
+            _copiedTimer.Stop();
+            _copiedTimer.Start();
         }
 
         private void Cancel()
@@ -240,10 +283,11 @@ namespace ConnectTogether.App.ViewModels
         }
 
         /// <summary>Для предпросмотра: этап 2 из 3, как в макете; подключение не запускается.</summary>
-        public void ShowMockupState(RoomInfo? room, TimeSpan elapsed)
+        public void ShowMockupState(RoomInfo? room, TimeSpan elapsed, string? myAddress = null)
         {
             _isPreview = true;
             _room = room;
+            _myAddress = myAddress;
             Steps[0].State = StepState.Done;
             Steps[0].Note = "Готово за 2 секунды";
             Steps[1].State = StepState.Active;

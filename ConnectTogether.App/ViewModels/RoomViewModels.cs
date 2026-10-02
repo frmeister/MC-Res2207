@@ -172,6 +172,9 @@ namespace ConnectTogether.App.ViewModels
         private int _serverMisses;
         private bool _serverDown;
         private int _maxGuests;
+        private bool _letInOpen;
+        private string _letInAddress = "";
+        private string? _letInError;
 
         /// <param name="monitorServer">false — не следить за сервером игры (предпросмотр экрана без запущенного сервера).</param>
         public HostRoomViewModel(ShellViewModel shell, IHostedRoom room, bool monitorServer = true) : base(shell, room)
@@ -193,6 +196,60 @@ namespace ConnectTogether.App.ViewModels
 
             InviteCommand = new RelayCommand(CopyInvite);
             CloseCommand = new AsyncCommand(CloseAsync);
+            ToggleLetInCommand = new RelayCommand(() => LetInOpen = !LetInOpen);
+            LetInCommand = new AsyncCommand(LetInAsync);
+        }
+
+        /// <summary>Открыта панель «Впустить по адресу».</summary>
+        public bool LetInOpen
+        {
+            get => _letInOpen;
+            set => Set(ref _letInOpen, value);
+        }
+
+        /// <summary>Внешний адрес игрока — он показан у него на экране подключения.</summary>
+        public string LetInAddress
+        {
+            get => _letInAddress;
+            set
+            {
+                if (Set(ref _letInAddress, value)) LetInError = null;
+            }
+        }
+
+        public string? LetInError
+        {
+            get => _letInError;
+            private set
+            {
+                if (Set(ref _letInError, value)) OnPropertyChanged(nameof(HasLetInError));
+            }
+        }
+
+        public bool HasLetInError => LetInError != null;
+
+        public ICommand ToggleLetInCommand { get; }
+        public ICommand LetInCommand { get; }
+
+        private async Task LetInAsync()
+        {
+            if (!RoomAddress.TryParse(LetInAddress, out var host, out var port, out var error))
+            {
+                LetInError = error;
+                return;
+            }
+            var endPoint = await RoomAddress.ResolveAsync(host, port, CancellationToken.None);
+            if (endPoint == null)
+            {
+                LetInError = $"Имя {host} не найдено.";
+                return;
+            }
+
+            Room.LetIn(endPoint);
+            Trace.WriteLine($"[HostRoom] Letting in {endPoint}");
+            Shell.Toast($"Впускаем {endPoint} полторы минуты — пусть друг нажмёт «Подключиться» или «Повторить»", ToastKind.Info);
+            LetInAddress = "";
+            LetInOpen = false;
         }
 
         public IHostedRoom Room { get; }

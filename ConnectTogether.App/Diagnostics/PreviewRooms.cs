@@ -32,6 +32,7 @@ namespace ConnectTogether.App.Diagnostics
         public string? LanAddress => "192.168.1.5:47312";
         public bool? IsSymmetricNat => false;
         public IReadOnlyList<RoomPlayer> Players => _players;
+        public void LetIn(IPEndPoint player) { }
 
         public event EventHandler? PlayersChanged { add { } remove { } }
         public event EventHandler<ChatMessage>? MessageReceived { add { } remove { } }

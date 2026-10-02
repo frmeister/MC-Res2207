@@ -3,6 +3,7 @@
 using System.Diagnostics;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ConnectTogether.App.Models;
 using ConnectTogether.App.Mvvm;
 using ConnectTogether.App.Services;
 
@@ -38,6 +39,11 @@ namespace ConnectTogether.App.ViewModels
         public bool HasTips => Tips.Count > 0;
         public bool HasOptions => Options.Count > 0;
 
+        /// <summary>Свой внешний адрес, который игрок отправляет хосту для «Впустить по адресу».</summary>
+        public string? MyAddress { get; init; }
+
+        public ICommand? CopyMyAddressCommand { get; init; }
+
         // Обратный отсчёт переподключения есть только у «Соединение потеряно»
         public virtual bool IsCountdown => false;
         public virtual int Seconds => 0;
@@ -68,23 +74,33 @@ namespace ConnectTogether.App.ViewModels
         /// 3a. Хост не ответил. Без сервера-посредника не отличить «комната закрыта» от «роутер хоста не пропускает
         /// входящие подключения», поэтому показываем, что проверить и что может сделать хост.
         /// </summary>
-        public static StateViewModel NoAnswer(ShellViewModel shell, string address, IReadOnlyList<string> details)
+        public static StateViewModel NoAnswer(ShellViewModel shell, string address, IReadOnlyList<string> details, string? myAddress = null)
         {
-            RoomAddress.TryParse(address, out _, out int port, out _);
             return new StateViewModel
             {
                 Tone = StateTone.Warning,
                 Icon = "clock",
                 ContentWidth = 760,
                 Title = "Друг не отвечает",
-                Description = $"Мы ждали ответа 30 секунд, но по адресу {address} никто не отозвался. Либо комната закрыта, " +
-                              "либо сеть друга не пропускает входящие подключения.",
+                Description = $"По адресу {address} никто не отозвался. Либо комната закрыта, либо роутер или брандмауэр друга " +
+                              "не пропускает входящие подключения — тогда он может впустить вас сам.",
                 Options = new[]
                 {
                     new StateOption("search", "Проверьте адрес", "Сверьте его с экраном друга «Комната создана»: комната работает, пока у него открыт ConnectTogether.", null),
-                    new StateOption("alert", "Брандмауэр", "Другу нужно разрешить ConnectTogether в брандмауэре Windows — он спрашивает об этом при первом запуске.", "ДЛЯ ХОСТА"),
-                    new StateOption("sliders", "Проброс порта", $"Если вы в разных сетях, другу нужно открыть на роутере UDP-порт {port} — тот, что после двоеточия.", "ДЛЯ ХОСТА"),
+                    new StateOption("userPlus", "Впустить по адресу",
+                        myAddress != null
+                            ? "Отправьте другу ваш адрес ниже. Он нажмёт «Впустить по адресу» в своей комнате, а вы — «Повторить»."
+                            : "Ваш внешний адрес узнать не удалось — подключиться так не получится. Проверьте интернет.",
+                        "ДЛЯ ХОСТА"),
+                    new StateOption("sliders", "Проброс порта",
+                        $"Или другу нужно открыть на роутере UDP-порт своей комнаты (по умолчанию {AppSettings.DefaultAppPort}) и прислать адрес с этим портом.",
+                        "ДЛЯ ХОСТА"),
                 },
+                MyAddress = myAddress,
+                CopyMyAddressCommand = myAddress == null ? null : new RelayCommand(() =>
+                {
+                    if (AppServices.CopyToClipboard(myAddress)) shell.Toast("Ваш адрес скопирован — отправьте его другу");
+                }),
                 Details = details,
                 DetailsOpen = true, // Для ошибок связи детали открыты сразу
                 PrimaryLabel = "Повторить",

@@ -80,6 +80,20 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
+            <!-- Свой адрес для «Впустить по адресу» у хоста -->
+            <Border Margin="0,12,0,0" Padding="16,12" Style="{StaticResource Card}"
+                    Visibility="{Binding MyAddress, Converter={StaticResource NullToCollapsed}}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Height="38" Padding="14,0" Style="{StaticResource Btn.Secondary}" ctl:Ui.Icon="copy"
+                            Content="Скопировать" Command="{Binding CopyMyAddressCommand}" />
+                    <TextBlock VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource Tx3}">
+                        <Run Text="Ваш адрес для хоста:" />
+                        <Run Text="{Binding MyAddress, Mode=OneWay}" FontFamily="{StaticResource FontMono}" FontWeight="{StaticResource Mono600}"
+                             FontSize="15" Foreground="{DynamicResource Tx}" />
+                    </TextBlock>
+                </DockPanel>
+            </Border>
+
             <StackPanel Margin="0,22,0,0" Orientation="Horizontal">
                 <Button Height="44" Padding="20,0" FontSize="15" Style="{StaticResource Btn.Primary}" ctl:Ui.Icon="refresh" ctl:Ui.IconSize="17"
                         Content="{Binding PrimaryLabel}" Command="{Binding PrimaryCommand}" IsDefault="True" />

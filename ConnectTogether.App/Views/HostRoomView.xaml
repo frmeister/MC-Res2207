@@ -113,8 +113,29 @@
                             <DockPanel>
                                 <TextBlock DockPanel.Dock="Right" FontSize="13" Foreground="{DynamicResource Tx3}" Text="{Binding SlotsText}"
                                            VerticalAlignment="Center" />
+                                <Button DockPanel.Dock="Right" Margin="0,0,16,0" Style="{StaticResource Btn.Link}" FontSize="13"
+                                        VerticalAlignment="Center" Content="Впустить по адресу" Command="{Binding ToggleLetInCommand}" />
                                 <TextBlock Style="{StaticResource T.PanelTitle}" Text="Игроки" />
                             </DockPanel>
+                        </Border>
+
+                        <!-- Встречное подключение: игрок прислал свой адрес, а сеть хоста не пропускает его сама -->
+                        <Border DockPanel.Dock="Top" Padding="16,12" Background="{DynamicResource Sf2}" BorderBrush="{DynamicResource Bd}"
+                                BorderThickness="0,0,0,1" Visibility="{Binding LetInOpen, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource T.Hint}"
+                                           Text="Друг не может подключиться? У него на экране подключения есть «Ваш адрес для хоста» — введите его, и ConnectTogether откроет ему путь через ваш роутер." />
+                                <DockPanel Margin="0,10,0,0">
+                                    <Button DockPanel.Dock="Right" Margin="8,0,0,0" Height="38" Padding="16,0" Style="{StaticResource Btn.Primary}"
+                                            ctl:Ui.Icon="userPlus" Content="Впустить" Command="{Binding LetInCommand}" IsDefault="{Binding LetInOpen}" />
+                                    <TextBox Height="38" Style="{StaticResource TextBox.Field}" FontFamily="{StaticResource FontMono}"
+                                             FontWeight="{StaticResource Mono500}" FontSize="14" ctl:Ui.Placeholder="188.186.82.227:47312"
+                                             ctl:Ui.HasError="{Binding HasLetInError}"
+                                             Text="{Binding LetInAddress, UpdateSourceTrigger=PropertyChanged}" />
+                                </DockPanel>
+                                <TextBlock Margin="0,6,0,0" FontSize="13" Foreground="{DynamicResource Er}" Text="{Binding LetInError}" TextWrapping="Wrap"
+                                           Visibility="{Binding HasLetInError, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
                         </Border>
 
                         <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Players}" Focusable="False"

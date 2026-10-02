@@ -15,6 +15,9 @@ namespace ConnectTogether.App.Services
     /// </summary>
     public sealed class CoreRoomService : IRoomService
     {
+        /// <summary>Сколько игрок ждёт хоста: хватает, чтобы отправить ему свой адрес и дождаться «Впустить по адресу».</summary>
+        private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromMinutes(2);
+
         private readonly SettingsStore _settings;
         private readonly IntegrationCatalog _catalog;
         private readonly IPAddress _bindAddress;
@@ -55,12 +58,12 @@ namespace ConnectTogether.App.Services
                 throw new RoomJoinException(JoinFailure.HostNotResponding, new[] { $"Имя {hostName} не найдено в DNS" });
 
             // Progress создан в потоке интерфейса — этапы приходят туда же
-            var coreProgress = new Progress<RoomJoinStage>(stage => progress?.Report(new JoinProgress(stage switch
+            var coreProgress = new Progress<RoomJoinProgress>(p => progress?.Report(new JoinProgress(p.Stage switch
             {
                 RoomJoinStage.FindingAddress => JoinStage.FindingAddress,
                 RoomJoinStage.ContactingHost => JoinStage.ContactingHost,
                 _ => JoinStage.Done,
-            }, null)));
+            }, null, p.PublicEndPoint?.ToString())));
 
             RoomClient client;
             try
@@ -69,6 +72,9 @@ namespace ConnectTogether.App.Services
                 {
                     PlayerName = playerName,
                     BindAddress = _bindAddress,
+                    // Постоянный порт — постоянный внешний адрес: хосту не придётся вводить его заново после «Повторить»
+                    LocalPort = _settings.Current.AppPort,
+                    HandshakeTimeout = HandshakeTimeout,
                     DiscoverPublicAddress = _discoverPublicAddress ? null : false,
                 };
                 client = await RoomClient.JoinAsync(endPoint, options, coreProgress, ct);
@@ -82,7 +88,7 @@ namespace ConnectTogether.App.Services
                     RoomConnectError.IncompatibleVersion => JoinFailure.IncompatibleVersion,
                     _ => JoinFailure.HostNotResponding,
                 };
-                throw new RoomJoinException(failure, ex.Details);
+                throw new RoomJoinException(failure, ex.Details, ex.PublicEndPoint?.ToString());
             }
 
             var game = _catalog.Find(client.GameId) ?? IntegrationCatalog.Unknown(client.GameId);
@@ -150,6 +156,8 @@ namespace ConnectTogether.App.Services
         public IPAddress? PublicAddress => _host.PublicEndPoint?.Address;
         public string? LanAddress => _host.LanEndPoints.FirstOrDefault()?.ToString();
         public bool? IsSymmetricNat => _host.IsSymmetricNat;
+
+        public void LetIn(IPEndPoint player) => _host.LetIn(player);
 
         public IReadOnlyList<RoomPlayer> Players => _host.Members.Select(m => CoreRoomService.ToPlayer(m, m.Id == 0)).ToList();
 

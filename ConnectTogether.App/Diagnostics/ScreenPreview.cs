@@ -18,7 +18,7 @@ namespace ConnectTogether.App.Diagnostics
         public static readonly string[] Ids =
         {
             "1a", "1b", "1c", "1d", "1e", "1f", "1g", "1h", "1i", "1j", "1k", "1l", "1m",
-            "3a", "3d", "3e", "3f", "3g", "3h", "3i",
+            "3a", "3d", "3e", "3f", "3g", "3h", "3i", "letin",
         };
 
         public static ShellViewModel? TryCreateShell(string[] args)
@@ -90,7 +90,7 @@ namespace ConnectTogether.App.Diagnostics
                     break;
                 case "1h":
                     var connecting = new ConnectingViewModel(shell, "203.0.113.5:47312");
-                    connecting.ShowMockupState(null, TimeSpan.FromSeconds(12));
+                    connecting.ShowMockupState(null, TimeSpan.FromSeconds(12), "188.186.82.227:47312");
                     shell.Navigate(connecting);
                     break;
                 case "1i":
@@ -98,6 +98,12 @@ namespace ConnectTogether.App.Diagnostics
                     break;
                 case "3i":
                     shell.EnterRoom(MockupHostScreen(shell, fill: false));
+                    break;
+                case "letin": // Не из макета: комната хоста с открытой панелью «Впустить по адресу»
+                    var letIn = MockupHostScreen(shell, fill: false);
+                    letIn.LetInOpen = true;
+                    letIn.LetInAddress = "188.186.82.227:47312";
+                    shell.EnterRoom(letIn);
                     break;
                 case "1j":
                     shell.EnterRoom(MockupPlayerScreen(shell, rust));
@@ -114,8 +120,8 @@ namespace ConnectTogether.App.Diagnostics
                 case "3a":
                     shell.Navigate(StateViewModel.NoAnswer(shell, "203.0.113.5:47312", new[]
                     {
-                        "Хост 203.0.113.5:47312: нет ответа за 30 с", "Ваш внешний адрес: 198.51.100.24:3858 (обычный NAT)",
-                    }));
+                        "Хост 203.0.113.5:47312: нет ответа за 120 с", "Ваш внешний адрес: 188.186.82.227:47312 (обычный NAT)",
+                    }, "188.186.82.227:47312"));
                     break;
                 case "3d":
                     var host = MockupHostScreen(shell, fill: true);

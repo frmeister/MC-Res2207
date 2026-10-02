@@ -8,6 +8,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using MC_Ref2207_NetSocketLib;
 using MCTunnel.Core.Network;
 using MCTunnel.Core.Rooms;
 using Xunit;
@@ -237,6 +238,54 @@ namespace MCTunnel.Tests
             var error = await Assert.ThrowsAsync<RoomConnectException>(() =>
                 RoomClient.JoinAsync(new IPEndPoint(IPAddress.Loopback, port), ClientOptions("Марина", TimeSpan.FromSeconds(1))));
             Assert.Equal(RoomConnectError.HostNotResponding, error.Error);
+        }
+
+        private static int FreeUdpPort()
+        {
+            using var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            return ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
+        }
+
+        // «Впустить по адресу»: хост шлёт KeepAlive на адрес игрока, чтобы свой роутер и брандмауэр пропустили его Hello
+        [Fact]
+        public async Task LetIn_SendsKeepAlivesToPlayerAddress()
+        {
+            using var host = await OpenHostAsync();
+            using var player = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+
+            host.LetIn((IPEndPoint)player.Client.LocalEndPoint!, TimeSpan.FromSeconds(2));
+
+            var received = await player.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(PacketType.KeepAlive, Packet.FromBytes(received.Buffer).Type);
+            Assert.Equal(host.Port, received.RemoteEndPoint.Port);
+        }
+
+        [Fact]
+        public async Task LetIn_DoesNotDisturbJoiningPlayer()
+        {
+            using var host = await OpenHostAsync();
+            int playerPort = FreeUdpPort();
+            host.LetIn(new IPEndPoint(IPAddress.Loopback, playerPort));
+
+            var options = ClientOptions("Марина");
+            using var marina = await RoomClient.JoinAsync(new IPEndPoint(IPAddress.Loopback, host.Port),
+                new RoomClientOptions { PlayerName = "Марина", BindAddress = IPAddress.Loopback, LocalPort = playerPort, PingInterval = options.PingInterval });
+
+            await WaitUntilAsync(() => host.Members.Any(m => m.Name == "Марина"), "Марина в комнате");
+        }
+
+        // Порт для постоянного адреса занят (например, на этом компьютере открыта комната) — подключаемся с любого
+        [Fact]
+        public async Task BusyLocalPort_FallsBackToRandomPort()
+        {
+            using var host = await OpenHostAsync();
+            using var busy = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            int busyPort = ((IPEndPoint)busy.Client.LocalEndPoint!).Port;
+
+            using var marina = await RoomClient.JoinAsync(new IPEndPoint(IPAddress.Loopback, host.Port),
+                new RoomClientOptions { PlayerName = "Марина", BindAddress = IPAddress.Loopback, LocalPort = busyPort });
+
+            Assert.True(marina.IsConnected);
         }
 
         // Хост пропал (например, перезапустил приложение) и снова открыл комнату на том же порту:

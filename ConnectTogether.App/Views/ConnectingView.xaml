@@ -80,6 +80,25 @@
             </ItemsControl>
         </Border>
 
+        <Border Margin="0,16,0,0" Padding="16,14" Style="{StaticResource Card}"
+                Visibility="{Binding ShowMyAddress, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+                <TextBlock FontSize="14" FontWeight="SemiBold" Text="Хост долго не отвечает?" />
+                <TextBlock Margin="0,4,0,0" FontSize="13" LineHeight="19" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
+                           Foreground="{DynamicResource Tx2}"
+                           Text="Возможно, его роутер не пропускает входящие подключения. Отправьте хосту ваш адрес — он нажмёт «Впустить по адресу» в своей комнате, а подключение здесь продолжится само." />
+                <DockPanel Margin="0,12,0,0">
+                    <Button DockPanel.Dock="Right" Height="38" Padding="14,0" Style="{StaticResource Btn.Secondary}" ctl:Ui.Icon="copy"
+                            Content="{Binding CopyLabel}" Command="{Binding CopyMyAddressCommand}" />
+                    <TextBlock VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource Tx3}">
+                        <Run Text="Ваш адрес для хоста:" />
+                        <Run Text="{Binding MyAddress, Mode=OneWay}" FontFamily="{StaticResource FontMono}" FontWeight="{StaticResource Mono600}"
+                             FontSize="15" Foreground="{DynamicResource Tx}" />
+                    </TextBlock>
+                </DockPanel>
+            </StackPanel>
+        </Border>
+
         <Border Margin="0,26,0,0" Padding="16,14" CornerRadius="12" Background="{DynamicResource AcSoft}">
             <DockPanel>
                 <ctl:Icon DockPanel.Dock="Left" Kind="info" Width="18" Height="18" Margin="0,1,0,0" VerticalAlignment="Top"

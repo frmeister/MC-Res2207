@@ -58,6 +58,8 @@ namespace MCTunnel.Core.Rooms
         private static readonly TimeSpan JoinTimeout = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan StunTimeout = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan MappingKeepAliveInterval = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan LetInDuration = TimeSpan.FromSeconds(90);
+        private static readonly TimeSpan LetInInterval = TimeSpan.FromMilliseconds(250);
 
         private readonly RoomHostOptions _options;
         private readonly UdpPeer _peer;
@@ -166,6 +168,52 @@ namespace MCTunnel.Core.Rooms
             text = RoomProtocol.CleanChat(text);
             if (text.Length == 0) return;
             await BroadcastAsync(RoomProtocol.BuildChat(new RoomChatMessage(HostMemberId, HostName, text)));
+        }
+
+        /// <summary>
+        /// Встречное подключение. Роутер хоста и брандмауэр Windows обычно пропускают входящие UDP-пакеты только с адресов,
+        /// куда этот компьютер сам уже что-то отправлял. Поэтому, пока игрок подключается, шлём на его внешний адрес
+        /// служебные пакеты KeepAlive (его канал их просто не замечает) — после этого его Hello доходят до комнаты.
+        /// Пакеты идут duration (по умолчанию 90 с) или пока игрок с этого IP не войдёт в комнату.
+        /// </summary>
+        public void LetIn(IPEndPoint playerEndPoint, TimeSpan? duration = null)
+        {
+            if (playerEndPoint == null) throw new ArgumentNullException(nameof(playerEndPoint));
+            if (Volatile.Read(ref _closed) != 0) return;
+            _ = LetInAsync(playerEndPoint, duration ?? LetInDuration);
+        }
+
+        private async Task LetInAsync(IPEndPoint playerEndPoint, TimeSpan duration)
+        {
+            Trace.WriteLine($"[Core.Rooms.Host] Letting in {playerEndPoint} for {duration.TotalSeconds:0}s");
+            var packet = new Packet(Array.Empty<byte>(), 0, 0, PacketType.KeepAlive).ToBytes();
+            long deadline = Environment.TickCount64 + (long)duration.TotalMilliseconds;
+            try
+            {
+                while (Environment.TickCount64 < deadline)
+                {
+                    if (_connections.Values.Any(c => c.MemberId != null && c.EndPoint.Address.Equals(playerEndPoint.Address)))
+                    {
+                        Trace.WriteLine($"[Core.Rooms.Host] {playerEndPoint.Address} joined, stop letting in");
+                        return;
+                    }
+
+                    try
+                    {
+                        await _peer.SendToAsync(packet, playerEndPoint);
+                    }
+                    catch (SocketException ex)
+                    {
+                        Trace.WriteLine($"[Core.Rooms.Host] Let-in packet to {playerEndPoint} failed: {ex.Message}");
+                    }
+                    await Task.Delay(LetInInterval, _cts.Token);
+                }
+                Trace.WriteLine($"[Core.Rooms.Host] Stopped letting in {playerEndPoint}: nobody joined");
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+            {
+                // Комната закрыта
+            }
         }
 
         /// <summary>Закрывает комнату: игроки получают «комната закрыта», соединения закрываются.</summary>

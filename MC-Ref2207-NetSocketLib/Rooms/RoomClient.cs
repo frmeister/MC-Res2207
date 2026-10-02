@@ -17,7 +17,11 @@ namespace MCTunnel.Core.Rooms
     {
         public required string PlayerName { get; init; }
 
-        /// <summary>Локальный UDP-порт; 0 — любой свободный.</summary>
+        /// <summary>
+        /// Локальный UDP-порт; 0 — любой свободный. С постоянным портом внешний адрес игрока не меняется
+        /// между попытками — хосту, который впускает игрока по адресу, не нужно вводить его заново.
+        /// Порт занят — берётся любой свободный.
+        /// </summary>
         public int LocalPort { get; init; }
 
         public IPAddress BindAddress { get; init; } = IPAddress.Any;
@@ -47,6 +51,9 @@ namespace MCTunnel.Core.Rooms
         Done,
     }
 
+    /// <summary>Этап подключения; PublicEndPoint — свой внешний адрес, как только его сообщил STUN.</summary>
+    public sealed record RoomJoinProgress(RoomJoinStage Stage, IPEndPoint? PublicEndPoint);
+
     public enum RoomConnectError
     {
         /// <summary>Хост не ответил: комната закрыта, адрес неверный или сеть хоста не пропускает входящие подключения.</summary>
@@ -61,14 +68,18 @@ namespace MCTunnel.Core.Rooms
 
     public sealed class RoomConnectException : Exception
     {
-        public RoomConnectException(RoomConnectError error, IReadOnlyList<string> details)
+        public RoomConnectException(RoomConnectError error, IReadOnlyList<string> details, IPEndPoint? publicEndPoint = null)
             : base(error.ToString())
         {
             Error = error;
             Details = details;
+            PublicEndPoint = publicEndPoint;
         }
 
         public RoomConnectError Error { get; }
+
+        /// <summary>Свой внешний адрес — его хост вводит в «Впустить по адресу», если его сеть не пропускает входящие.</summary>
+        public IPEndPoint? PublicEndPoint { get; }
 
         /// <summary>Технические подробности для пользователя и поддержки.</summary>
         public IReadOnlyList<string> Details { get; }
@@ -156,18 +167,17 @@ namespace MCTunnel.Core.Rooms
         }
 
         public static async Task<RoomClient> JoinAsync(IPEndPoint hostEndPoint, RoomClientOptions options,
-            IProgress<RoomJoinStage>? progress = null, CancellationToken cancellationToken = default)
+            IProgress<RoomJoinProgress>? progress = null, CancellationToken cancellationToken = default)
         {
             if (hostEndPoint == null) throw new ArgumentNullException(nameof(hostEndPoint));
             if (options == null) throw new ArgumentNullException(nameof(options));
 
-            var peer = new UdpPeer(new IPEndPoint(options.BindAddress, options.LocalPort));
-            _ = Task.Run(() => peer.StartReceivingAsync());
+            var peer = OpenPeer(options);
             var client = new RoomClient(hostEndPoint, options, peer);
 
             try
             {
-                progress?.Report(RoomJoinStage.FindingAddress);
+                progress?.Report(new RoomJoinProgress(RoomJoinStage.FindingAddress, null));
                 bool useStun = options.DiscoverPublicAddress ?? !IsLocalNetwork(hostEndPoint.Address);
                 if (useStun)
                 {
@@ -183,10 +193,10 @@ namespace MCTunnel.Core.Rooms
                     }
                 }
 
-                progress?.Report(RoomJoinStage.ContactingHost);
+                progress?.Report(new RoomJoinProgress(RoomJoinStage.ContactingHost, client.Stun?.PublicEndPoint));
                 await client.ConnectAsync(options.HandshakeTimeout, useStun, cancellationToken);
 
-                progress?.Report(RoomJoinStage.Done);
+                progress?.Report(new RoomJoinProgress(RoomJoinStage.Done, client.Stun?.PublicEndPoint));
                 Trace.WriteLine($"[Core.Rooms.Client] Joined room of '{client.HostName}' at {hostEndPoint}, game '{client.GameId}', member {client.MemberId}");
                 _ = client.PingLoopAsync();
                 return client;
@@ -264,7 +274,7 @@ namespace MCTunnel.Core.Rooms
                 DetachAndDispose(channel, tunnel);
                 bool noInternet = checkedInternet && Stun == null;
                 throw new RoomConnectException(noInternet ? RoomConnectError.NoInternet : RoomConnectError.HostNotResponding,
-                    Diagnostics($"Хост {HostEndPoint}: нет ответа за {timeout.TotalSeconds:0} с"));
+                    Diagnostics($"Хост {HostEndPoint}: нет ответа за {timeout.TotalSeconds:0} с"), Stun?.PublicEndPoint);
             }
 
             await channel.SendDataAsync(RoomProtocol.BuildJoin(PlayerName), cancellationToken);
@@ -278,7 +288,7 @@ namespace MCTunnel.Core.Rooms
             {
                 DetachAndDispose(channel, tunnel);
                 throw new RoomConnectException(RoomConnectError.HostNotResponding,
-                    Diagnostics($"Хост {HostEndPoint}: соединение есть, но комната не ответила"));
+                    Diagnostics($"Хост {HostEndPoint}: соединение есть, но комната не ответила"), Stun?.PublicEndPoint);
             }
 
             if (answer[0] == RoomProtocol.Reject)
@@ -501,6 +511,27 @@ namespace MCTunnel.Core.Rooms
             if (handler == null) return;
             try { handler(this, args); }
             catch (Exception ex) { Trace.WriteLine($"[Core.Rooms.Client] Event handler threw exception: {ex}"); }
+        }
+
+        private static UdpPeer OpenPeer(RoomClientOptions options)
+        {
+            UdpPeer? peer = null;
+            if (options.LocalPort != 0)
+            {
+                try
+                {
+                    peer = new UdpPeer(new IPEndPoint(options.BindAddress, options.LocalPort));
+                }
+                catch (SocketException)
+                {
+                    // Порт занят (например, на этом же компьютере открыта комната) — берём любой
+                    Trace.WriteLine($"[Core.Rooms.Client] UDP {options.LocalPort} is busy, using a random port");
+                }
+            }
+
+            peer ??= new UdpPeer(new IPEndPoint(options.BindAddress, 0));
+            _ = Task.Run(() => peer.StartReceivingAsync());
+            return peer;
         }
 
         /// <summary>Адрес из локальной сети, VPN или этого компьютера — внешний адрес для подключения не нужен.</summary>

@@ -189,6 +189,43 @@ namespace ConnectTogether.App.Tests
         }
 
         [Fact]
+        public void HostRoom_LetIn_ValidatesAddressAndAsksRoom()
+        {
+            _shell.StartCreateRoom("rust");
+            ((ChooseGameViewModel)_shell.Current!).NextCommand.Execute(null);
+            ((ServerCheckViewModel)_shell.Current!).CreateRoomCommand.Execute(null);
+            ((InviteViewModel)_shell.Current!).GoToRoomCommand.Execute(null);
+            var room = Assert.IsType<HostRoomViewModel>(_shell.Current);
+            var hosted = (FakeHostedRoom)room.Room;
+
+            room.ToggleLetInCommand.Execute(null);
+            Assert.True(room.LetInOpen);
+
+            room.LetInAddress = "188.186.82";
+            room.LetInCommand.Execute(null);
+            Assert.True(room.HasLetInError);
+            Assert.Empty(hosted.LetInRequests);
+
+            room.LetInAddress = "Мой адрес: 188.186.82.227:59333";
+            room.LetInCommand.Execute(null);
+            Assert.Equal(new IPEndPoint(IPAddress.Parse("188.186.82.227"), 59333), Assert.Single(hosted.LetInRequests));
+            Assert.False(room.LetInOpen);
+        }
+
+        [Fact]
+        public void PlayerPath_NoAnswer_ShowsOwnAddressForHost()
+        {
+            _rooms.Failure = JoinFailure.HostNotResponding;
+            _shell.StartJoin(HostAddress);
+            ((JoinViewModel)_shell.Current!).ConnectCommand.Execute(null);
+
+            var state = Assert.IsType<StateViewModel>(_shell.Current);
+            Assert.Equal("188.186.82.227:47312", state.MyAddress);
+            Assert.NotNull(state.CopyMyAddressCommand);
+            Assert.Contains(state.Options, o => o.Title == "Впустить по адресу");
+        }
+
+        [Fact]
         public void PlayerPath_RoomFull_ReturnsToJoinWithExplanation()
         {
             _rooms.Failure = JoinFailure.RoomFull;
@@ -226,7 +263,7 @@ namespace ConnectTogether.App.Tests
             public Task<IJoinedRoom> JoinRoomAsync(string address, string playerName, IProgress<JoinProgress>? progress, CancellationToken ct = default)
             {
                 LastAddress = address;
-                if (Failure is JoinFailure failure) throw new RoomJoinException(failure, new[] { "fake" });
+                if (Failure is JoinFailure failure) throw new RoomJoinException(failure, new[] { "fake" }, "188.186.82.227:47312");
                 return Task.FromResult<IJoinedRoom>(new FakeJoinedRoom(address, playerName));
             }
         }
@@ -251,6 +288,8 @@ namespace ConnectTogether.App.Tests
             public IPAddress? PublicAddress { get; }
             public string? LanAddress => "192.168.1.5:47312";
             public bool? IsSymmetricNat => false;
+            public List<IPEndPoint> LetInRequests { get; } = new();
+            public void LetIn(IPEndPoint player) => LetInRequests.Add(player);
             public event EventHandler? PlayersChanged { add { } remove { } }
             public event EventHandler<ChatMessage>? MessageReceived { add { } remove { } }
             public event EventHandler? AddressChanged { add { } remove { } }

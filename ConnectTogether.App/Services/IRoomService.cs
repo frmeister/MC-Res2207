@@ -57,6 +57,12 @@ namespace ConnectTogether.App.Services
         /// <summary>true — NAT меняет порт для каждого адресата, из интернета подключиться не получится без проброса порта.</summary>
         bool? IsSymmetricNat { get; }
 
+        /// <summary>
+        /// Впустить игрока по его внешнему адресу: некоторое время слать ему пакеты, чтобы роутер и брандмауэр
+        /// этого компьютера пропустили его подключение. Игрок в это время должен подключаться.
+        /// </summary>
+        void LetIn(IPEndPoint player);
+
         /// <summary>Внешний адрес сменился — друзьям нужно отправить новый.</summary>
         event EventHandler? AddressChanged;
 
@@ -94,8 +100,11 @@ namespace ConnectTogether.App.Services
         Done,
     }
 
-    /// <summary>Этап подключения; Room заполняется, когда хост ответил.</summary>
-    public sealed record JoinProgress(JoinStage Stage, RoomInfo? Room);
+    /// <summary>
+    /// Этап подключения; Room заполняется, когда хост ответил.
+    /// MyAddress — свой внешний адрес IP:порт: его хост вводит в «Впустить по адресу».
+    /// </summary>
+    public sealed record JoinProgress(JoinStage Stage, RoomInfo? Room, string? MyAddress = null);
 
     public sealed record RoomInfo(string Address, GameIntegration Game, string HostName);
 
@@ -113,14 +122,18 @@ namespace ConnectTogether.App.Services
 
     public sealed class RoomJoinException : Exception
     {
-        public RoomJoinException(JoinFailure failure, IReadOnlyList<string> details)
+        public RoomJoinException(JoinFailure failure, IReadOnlyList<string> details, string? myAddress = null)
             : base(failure.ToString())
         {
             Failure = failure;
             Details = details;
+            MyAddress = myAddress;
         }
 
         public JoinFailure Failure { get; }
+
+        /// <summary>Свой внешний адрес, если его удалось узнать.</summary>
+        public string? MyAddress { get; }
 
         /// <summary>Технические подробности для блока «Подробнее».</summary>
         public IReadOnlyList<string> Details { get; }
