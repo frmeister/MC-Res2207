@@ -63,7 +63,7 @@ namespace MC_Ref2207_NetSocketLib
         public ConnectionState State => _state;
 
         // -- Управление соединением --
-        public async Task<bool> ConnectAsync(IPEndPoint remoteEndPoint, CancellationToken cancellationToken = default)
+        public async Task<bool> ConnectAsync(IPEndPoint remoteEndPoint, int handshakeTimeoutMs = -1, CancellationToken cancellationToken = default)
         {
             if (_state != ConnectionState.Disconnected)
             {
@@ -79,27 +79,58 @@ namespace MC_Ref2207_NetSocketLib
 
             lock (_stateLock) { _state = ConnectionState.Connecting; }
 
-            Debug.WriteLine($"[Core.Network.ReliableChannel] Starting handshake with {_remoteEndPoint}, session={_sessionId}");
+            Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: starting handshake with {_remoteEndPoint}, session={_sessionId}");
 
             var handshakeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             _handshakeTcs = handshakeTcs;
 
+            // Determine handshake timeout: if caller provided value (>0) use it, otherwise use default MaxRetries * RetryDelayMs
+            int effectiveTimeoutMs = handshakeTimeoutMs > 0 ? handshakeTimeoutMs : (MaxRetries * RetryDelayMs);
+            Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: handshake timeout set to {effectiveTimeoutMs}ms");
+
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(MaxRetries * RetryDelayMs)); // Таймаут на рукопожатие
-            
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(effectiveTimeoutMs)); // Таймаут на рукопожатие
+
+            // Sender task: periodically send Hello until handshake completes or timeout/cancellation
             var senderTask = Task.Run(async () =>
             {
+                int attempt = 0;
                 while (!handshakeTcs.Task.IsCompleted && !timeoutCts.IsCancellationRequested)
                 {
+                    attempt++;
+                    Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: sending Hello attempt {attempt}");
                     await SendHelloAsync();
-                    try { await Task.Delay(RetryDelayMs, timeoutCts.Token); }
-                    catch (OperationCanceledException) { break; }
+                    try
+                    {
+                        await Task.Delay(RetryDelayMs, timeoutCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Debug.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: senderTask canceled due to timeout/cancellation");
+                        break;
+                    }
                 }
+
+                Debug.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: senderTask finished");
             });
 
-            using (timeoutCts.Token.Register(() => handshakeTcs.TrySetResult(false)))
+            // If timeout occurs, set handshake result to false. Also observe external cancellation.
+            using (timeoutCts.Token.Register(() =>
             {
-                bool success = await handshakeTcs.Task;
+                Debug.WriteLine("[Core.Network.ReliableChannel] ConnectAsync: handshake timeout/cancellation triggered");
+                handshakeTcs.TrySetResult(false);
+            }))
+            {
+                bool success = false;
+                try
+                {
+                    success = await handshakeTcs.Task;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[Core.Network.ReliableChannel] ConnectAsync: exception waiting for handshake: {ex.Message}");
+                    success = false;
+                }
 
                 lock (_stateLock)
                 {
@@ -113,8 +144,11 @@ namespace MC_Ref2207_NetSocketLib
                 }
                 else
                 {
-                    Debug.WriteLine("[Core.Network.ReliableChannel] Handshake failed, reverting to Disconnected.");
+                    Debug.WriteLine("[Core.Network.ReliableChannel] Handshake failed or canceled, reverting to Disconnected.");
                 }
+
+                // ensure senderTask is not left unobserved
+                try { await senderTask; } catch { /* ignore */ }
 
                 _handshakeTcs = null;
                 return success;
