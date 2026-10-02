@@ -1,0 +1,165 @@
+<!-- 1i / 2b. Комната хоста; 3i — в комнате пока нет игроков -->
+<UserControl x:Class="ConnectTogether.App.Views.HostRoomView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:ConnectTogether.App.Controls"
+             xmlns:vm="clr-namespace:ConnectTogether.App.ViewModels"
+             xmlns:models="clr-namespace:ConnectTogether.App.Models"
+             xmlns:views="clr-namespace:ConnectTogether.App.Views">
+    <UserControl.Resources>
+        <!-- Карточка-показатель над списком игроков -->
+        <Style x:Key="StatIcon" TargetType="Border">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="Background" Value="{DynamicResource Sf3}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource Tx2}" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="32,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="16" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="16" />
+            <RowDefinition />
+        </Grid.RowDefinitions>
+
+        <!-- Шапка комнаты -->
+        <DockPanel>
+            <Border DockPanel.Dock="Left" Width="48" Height="48" CornerRadius="12" Background="{DynamicResource Sf3}">
+                <ctl:Icon Kind="{Binding Game.Icon}" Width="24" Height="24" />
+            </Border>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Height="40" Padding="16,0" Style="{StaticResource Btn.Secondary}" ctl:Ui.Icon="userPlus" ctl:Ui.IconSize="17"
+                        Content="Пригласить ещё" Command="{Binding InviteCommand}" />
+                <Button Margin="10,0,0,0" Height="40" Padding="16,0" Style="{StaticResource Btn.Danger}" ctl:Ui.Icon="logout"
+                        ctl:Ui.IconSize="17" Content="Закрыть комнату" Command="{Binding CloseCommand}" />
+            </StackPanel>
+            <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource T.BlockTitle}" Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                <StackPanel Margin="0,5,0,0" Orientation="Horizontal">
+                    <ContentControl Style="{StaticResource Chip}" Background="{DynamicResource OkSoft}" Foreground="{DynamicResource Ok}"
+                                    ctl:Ui.Icon="checkCircle" Content="Комната открыта" />
+                    <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" FontSize="13" Text="{Binding Address}"
+                               FontFamily="{StaticResource FontMono}" FontWeight="{StaticResource Mono500}" Foreground="{DynamicResource Tx2}" />
+                    <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" FontSize="13" Text="·" Foreground="{DynamicResource Tx3}" />
+                    <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" FontSize="13" Text="{Binding ElapsedText}" Foreground="{DynamicResource Tx3}" />
+                </StackPanel>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Предупреждение: хост держит комнату открытой -->
+        <Border Grid.Row="2" Padding="14,11" CornerRadius="10" Background="{DynamicResource WnSoft}">
+            <StackPanel Orientation="Horizontal">
+                <ctl:Icon Kind="alert" Width="18" Height="18" Foreground="{DynamicResource Wn}" VerticalAlignment="Center" />
+                <TextBlock Margin="10,0,0,0" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center">
+                    <Run Text="Не закрывайте приложение, пока идёт игра" FontWeight="SemiBold" />
+                    <Run Text="— друзья сразу отключатся. Окно можно свернуть." Foreground="{DynamicResource Tx2}" />
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="320" />
+            </Grid.ColumnDefinitions>
+
+            <DockPanel>
+                <!-- Показатели -->
+                <UniformGrid DockPanel.Dock="Top" Columns="3" Margin="0,0,-12,12">
+                    <Border Margin="0,0,12,0" Padding="14,12" Style="{StaticResource Card}">
+                        <DockPanel>
+                            <Border Style="{StaticResource StatIcon}" Background="{DynamicResource OkSoft}" TextElement.Foreground="{DynamicResource Ok}">
+                                <ctl:Icon Kind="server" Width="17" Height="17" />
+                            </Border>
+                            <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                                <TextBlock FontSize="12" Foreground="{DynamicResource Tx3}" Text="Сервер игры" />
+                                <TextBlock Margin="0,1,0,0" Style="{StaticResource T.Label}" Text="{Binding ServerText}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Border Margin="0,0,12,0" Padding="14,12" Style="{StaticResource Card}">
+                        <DockPanel>
+                            <Border Style="{StaticResource StatIcon}">
+                                <ctl:Icon Kind="{Binding Game.Icon}" Width="17" Height="17" />
+                            </Border>
+                            <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                                <TextBlock FontSize="12" Foreground="{DynamicResource Tx3}" Text="Игра" />
+                                <TextBlock Margin="0,1,0,0" Style="{StaticResource T.Label}" Text="{Binding Game.ServerShortName}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Border Margin="0,0,12,0" Padding="14,12" Style="{StaticResource Card}">
+                        <DockPanel>
+                            <Border Style="{StaticResource StatIcon}">
+                                <ctl:Icon Kind="users" Width="17" Height="17" />
+                            </Border>
+                            <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                                <TextBlock FontSize="12" Foreground="{DynamicResource Tx3}" Text="Игроки" />
+                                <TextBlock Margin="0,1,0,0" Style="{StaticResource T.Label}" Text="{Binding CountLabel}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                </UniformGrid>
+
+                <!-- Игроки -->
+                <Border Style="{StaticResource Card}" ClipToBounds="True">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Padding="16,13" BorderBrush="{DynamicResource Bd}" BorderThickness="0,0,0,1">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Right" FontSize="13" Foreground="{DynamicResource Tx3}" Text="{Binding SlotsText}"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Style="{StaticResource T.PanelTitle}" Text="Игроки" />
+                            </DockPanel>
+                        </Border>
+
+                        <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Players}" Focusable="False"
+                                      Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <views:PlayerRow />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Grid>
+                            <ctl:DashedBorder Margin="16,4,16,16" Padding="20" CornerRadius="10"
+                                              Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock HorizontalAlignment="Center" FontSize="16" FontWeight="SemiBold" Text="Пока никого нет" />
+                                    <TextBlock Margin="0,10,0,0" MaxWidth="380" TextAlignment="Center" TextWrapping="Wrap" FontSize="14"
+                                               LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{DynamicResource Tx2}">
+                                        <Run Text="Отправьте другу адрес" />
+                                        <Run Text="{Binding Address, Mode=OneWay}" FontFamily="{StaticResource FontMono}"
+                                             FontWeight="{StaticResource Mono600}" Foreground="{DynamicResource Tx}" />
+                                        <Run Text="— он появится здесь, как только подключится." />
+                                    </TextBlock>
+                                    <Button Margin="0,14,0,0" Height="38" Padding="16,0" HorizontalAlignment="Center" Style="{StaticResource Btn.Primary}"
+                                            ctl:Ui.Icon="copy" ctl:Ui.IconStroke="1.8" Content="Скопировать сообщение для друга"
+                                            Command="{Binding InviteCommand}" />
+                                </StackPanel>
+                            </ctl:DashedBorder>
+
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False"
+                                          Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}, ConverterParameter=invert}">
+                                <ItemsControl ItemsSource="{Binding Players}" Focusable="False">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <views:PlayerRow />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </DockPanel>
+                </Border>
+            </DockPanel>
+
+            <views:ChatPanel Grid.Column="2" />
+        </Grid>
+    </Grid>
+</UserControl>

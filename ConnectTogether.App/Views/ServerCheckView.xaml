@@ -1,0 +1,64 @@
+<!-- 1d / 1e. Шаг 2: сервер найден или не запущен -->
+<UserControl x:Class="ConnectTogether.App.Views.ServerCheckView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:ConnectTogether.App.Controls"
+             xmlns:vm="clr-namespace:ConnectTogether.App.ViewModels">
+    <DockPanel>
+        <ctl:WizardHeader DockPanel.Dock="Top" Step="2" IsError="{Binding IsFound, Converter={StaticResource InvertBool}}"
+                          BackCommand="{Binding BackCommand}" />
+
+        <Grid>
+            <!-- Сервер найден -->
+            <StackPanel Margin="0,0,0,40" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Visibility="{Binding IsFound, Converter={StaticResource BoolToVisibility}}">
+                <Border Width="72" Height="72" CornerRadius="36" HorizontalAlignment="Center" Background="{DynamicResource OkSoft}">
+                    <ctl:Icon Kind="check" StrokeWidth="2.4" Width="34" Height="34" Foreground="{DynamicResource Ok}" />
+                </Border>
+                <TextBlock Margin="0,22,0,0" HorizontalAlignment="Center" Style="{StaticResource T.StateTitle}" Text="{Binding FoundTitle}" />
+                <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" FontSize="15" Foreground="{DynamicResource Tx2}">
+                    <Run Text="{Binding FoundPrefix, Mode=OneWay}" /><Run Text="{Binding FoundPort, Mode=OneWay}" FontFamily="{StaticResource FontMono}"
+                         Foreground="{DynamicResource Tx}" /><Run Text=". Можно создавать комнату." />
+                </TextBlock>
+                <Button Margin="0,28,0,0" HorizontalAlignment="Center" Height="48" Padding="24,0" FontSize="16" IsDefault="True"
+                        Style="{StaticResource Btn.Primary}" ctl:Ui.CornerRadius="10" ctl:Ui.TrailingIcon="arrowRight" ctl:Ui.IconSize="18"
+                        Content="{Binding CreateLabel}" Command="{Binding CreateRoomCommand}" />
+            </StackPanel>
+
+            <!-- Сервер не запущен -->
+            <StackPanel Width="600" Margin="0,28,0,0" HorizontalAlignment="Center"
+                        Visibility="{Binding IsFound, Converter={StaticResource BoolToVisibility}, ConverterParameter=invert}">
+                <DockPanel>
+                    <Border DockPanel.Dock="Left" Width="48" Height="48" CornerRadius="24" VerticalAlignment="Top" Background="{DynamicResource ErSoft}">
+                        <ctl:Icon Kind="xCircle" Width="24" Height="24" Foreground="{DynamicResource Er}" />
+                    </Border>
+                    <StackPanel Margin="16,0,0,0">
+                        <TextBlock Style="{StaticResource T.StateTitle}" Text="Сервер не запущен" />
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource T.Lead}" Text="{Binding ErrorDescription}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <Border Margin="0,22,0,0" Padding="22,20" Style="{StaticResource Card}">
+                    <ItemsControl ItemsSource="{Binding Steps}" Focusable="False" ItemTemplate="{StaticResource NumberedItemTemplate}" />
+                </Border>
+
+                <StackPanel Margin="0,22,0,0" Orientation="Horizontal">
+                    <Button Height="44" Padding="20,0" FontSize="15" Style="{StaticResource Btn.Primary}" ctl:Ui.Icon="refresh" ctl:Ui.IconSize="17"
+                            Content="{Binding RetryLabel}" Command="{Binding RetryCommand}" />
+                    <Button Margin="10,0,0,0" Height="44" Style="{StaticResource Btn.Ghost}" ctl:Ui.TrailingIcon="external"
+                            Content="{Binding Game.InstallHelpLabel}" Command="{Binding InstallHelpCommand}" />
+                </StackPanel>
+
+                <Border Margin="0,22,0,0" Padding="0,14,0,0" BorderBrush="{DynamicResource Bd}" BorderThickness="0,1,0,0">
+                    <StackPanel>
+                        <ToggleButton Style="{StaticResource Toggle.Details}" IsChecked="{Binding DetailsOpen}" />
+                        <Border Margin="0,10,0,0" Padding="14,12" CornerRadius="8" Background="{DynamicResource Sf}"
+                                Visibility="{Binding DetailsOpen, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Style="{StaticResource T.Details}" Text="{Binding Details}" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

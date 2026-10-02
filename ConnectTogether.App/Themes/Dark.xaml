@@ -1,0 +1,27 @@
+<!-- Токены тёмной темы (основная). Имена совпадают с CSS-переменными макета: bg → Bg, ac-soft → AcSoft. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Bg" Color="#121317" />
+    <SolidColorBrush x:Key="Sf" Color="#1A1C22" />
+    <SolidColorBrush x:Key="Sf2" Color="#20232A" />
+    <SolidColorBrush x:Key="Sf3" Color="#2A2E37" />
+    <SolidColorBrush x:Key="Bd" Color="#2C3039" />
+    <SolidColorBrush x:Key="Bd2" Color="#3B404C" />
+    <SolidColorBrush x:Key="Tx" Color="#ECEDF1" />
+    <SolidColorBrush x:Key="Tx2" Color="#A9AEBA" />
+    <SolidColorBrush x:Key="Tx3" Color="#878D9B" />
+    <SolidColorBrush x:Key="Ac" Color="#8E95FF" />
+    <SolidColorBrush x:Key="AcH" Color="#A3A9FF" />
+    <SolidColorBrush x:Key="AcTx" Color="#10123A" />
+    <SolidColorBrush x:Key="AcSoft" Color="#248E95FF" />
+    <SolidColorBrush x:Key="Ok" Color="#56C98F" />
+    <SolidColorBrush x:Key="OkSoft" Color="#2156C98F" />
+    <SolidColorBrush x:Key="Wn" Color="#EBB54F" />
+    <SolidColorBrush x:Key="WnSoft" Color="#21EBB54F" />
+    <SolidColorBrush x:Key="Er" Color="#F2806F" />
+    <SolidColorBrush x:Key="ErSoft" Color="#21F2806F" />
+
+    <!-- Плашка иконки на акцентной карточке и выделение текста -->
+    <SolidColorBrush x:Key="AcPlate" Color="#1F10123A" />
+    <SolidColorBrush x:Key="Selection" Color="#8E95FF" />
+</ResourceDictionary>

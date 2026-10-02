@@ -1,0 +1,25 @@
+<Window x:Class="ConnectTogether.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:ConnectTogether.App.Views"
+        Title="ConnectTogether"
+        Width="1100" Height="720" MinWidth="960" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Bg}"
+        Foreground="{DynamicResource Tx}"
+        FontFamily="{StaticResource FontUi}"
+        FontSize="14"
+        UseLayoutRounding="True">
+    <!-- Своё оформление окна: заголовок высотой 40 рисует ShellView, рамку и тень — Windows -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <Window.InputBindings>
+        <KeyBinding Key="N" Modifiers="Control" Command="{Binding CreateRoomShortcut}" />
+        <KeyBinding Key="J" Modifiers="Control" Command="{Binding JoinShortcut}" />
+    </Window.InputBindings>
+    <Border x:Name="Root" BorderBrush="{DynamicResource Bd}" BorderThickness="1">
+        <views:ShellView />
+    </Border>
+</Window>

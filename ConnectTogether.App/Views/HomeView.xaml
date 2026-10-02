@@ -1,0 +1,124 @@
+<!-- 1b. Главный экран; 3h — пусто, нет недавних комнат -->
+<UserControl x:Class="ConnectTogether.App.Views.HomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:ConnectTogether.App.Controls"
+             xmlns:vm="clr-namespace:ConnectTogether.App.ViewModels">
+    <Grid Margin="64,44">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="36" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="36" />
+            <RowDefinition />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="{Binding Greeting}" FontSize="30" LineHeight="38" LineStackingStrategy="BlockLineHeight"
+                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+            <TextBlock Margin="0,6,0,0" Text="Во что играем сегодня?" FontSize="16" LineHeight="24"
+                       LineStackingStrategy="BlockLineHeight" Foreground="{DynamicResource Tx2}" />
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition />
+            </Grid.ColumnDefinitions>
+
+            <Button Style="{StaticResource Btn.CardPrimary}" Command="{Binding CreateRoomCommand}">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top">
+                        <TextBlock DockPanel.Dock="Right" Text="Ctrl+N" FontFamily="{StaticResource FontMono}"
+                                   FontWeight="{StaticResource Mono600}" FontSize="12" Opacity="0.75" />
+                        <Border Width="44" Height="44" CornerRadius="12" HorizontalAlignment="Left" Background="{DynamicResource AcPlate}">
+                            <ctl:Icon Kind="plus" StrokeWidth="2.2" Width="22" Height="22" />
+                        </Border>
+                    </DockPanel>
+                    <StackPanel VerticalAlignment="Bottom">
+                        <TextBlock Text="Создать комнату" FontSize="22" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,4,0,0" Text="Вы запускаете сервер игры, друзья заходят к вам" FontSize="14"
+                                   LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" Opacity="0.8" />
+                    </StackPanel>
+                </DockPanel>
+            </Button>
+
+            <Button Grid.Column="2" Style="{StaticResource Btn.CardSecondary}" Command="{Binding JoinCommand}">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top">
+                        <TextBlock DockPanel.Dock="Right" Text="Ctrl+J" FontFamily="{StaticResource FontMono}"
+                                   FontWeight="{StaticResource Mono600}" FontSize="12" Foreground="{DynamicResource Tx3}" />
+                        <Border Width="44" Height="44" CornerRadius="12" HorizontalAlignment="Left" Background="{DynamicResource Sf3}">
+                            <ctl:Icon Kind="enter" StrokeWidth="2" Width="21" Height="21" />
+                        </Border>
+                    </DockPanel>
+                    <StackPanel VerticalAlignment="Bottom">
+                        <TextBlock Text="Присоединиться по адресу" FontSize="22" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,4,0,0" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                                   Foreground="{DynamicResource Tx2}">
+                            <Run Text="Друг прислал адрес вида" />
+                            <Run Text="203.0.113.5:47312" FontFamily="{StaticResource FontMono}" Foreground="{DynamicResource Tx}" />
+                        </TextBlock>
+                    </StackPanel>
+                </DockPanel>
+            </Button>
+        </Grid>
+
+        <DockPanel Grid.Row="4">
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                <Button DockPanel.Dock="Right" Style="{StaticResource Btn.Link}" Content="Очистить список" FontSize="13"
+                        FontWeight="Normal" Foreground="{DynamicResource Tx2}" Command="{Binding ClearCommand}"
+                        Visibility="{Binding HasRooms, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock Text="Недавние комнаты" FontSize="15" FontWeight="SemiBold" />
+            </DockPanel>
+
+            <Grid>
+                <Border Style="{StaticResource Card}" VerticalAlignment="Top" ClipToBounds="True"
+                        Visibility="{Binding HasRooms, Converter={StaticResource BoolToVisibility}}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                        <ItemsControl ItemsSource="{Binding RecentRooms}" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:RecentRoomItem}">
+                                    <Grid>
+                                        <Border Height="1" VerticalAlignment="Top" Background="{DynamicResource Bd}"
+                                                Visibility="{Binding RelativeSource={RelativeSource PreviousData}, Converter={StaticResource NullToCollapsed}}" />
+                                        <DockPanel Margin="16,12">
+                                            <Border DockPanel.Dock="Left" Width="38" Height="38" CornerRadius="10" Margin="0,0,14,0"
+                                                    Background="{DynamicResource Sf3}">
+                                                <ctl:Icon Kind="{Binding Icon}" Width="19" Height="19" Foreground="{DynamicResource Tx2}" />
+                                            </Border>
+                                            <Button DockPanel.Dock="Right" Margin="14,0,0,0" Style="{StaticResource Btn.Outline}"
+                                                    Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" />
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Title}" FontSize="15" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                                                           FontWeight="Medium" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Margin="0,2,0,0" Text="{Binding Meta}" FontSize="13" LineHeight="18"
+                                                           LineStackingStrategy="BlockLineHeight" Foreground="{DynamicResource Tx3}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+
+                <ctl:DashedBorder CornerRadius="12" Padding="24"
+                                  Visibility="{Binding HasRooms, Converter={StaticResource BoolToVisibility}, ConverterParameter=invert}">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Border Width="44" Height="44" CornerRadius="22" HorizontalAlignment="Center" Background="{DynamicResource Sf3}">
+                            <ctl:Icon Kind="clock" Width="22" Height="22" Foreground="{DynamicResource Tx2}" />
+                        </Border>
+                        <TextBlock Margin="0,10,0,0" HorizontalAlignment="Center" Text="Здесь появятся ваши комнаты"
+                                   FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,10,0,0" MaxWidth="420" TextAlignment="Center" TextWrapping="Wrap" FontSize="14"
+                                   LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{DynamicResource Tx2}"
+                                   Text="Создайте комнату для своей игры или попросите у друга код приглашения. Потом сюда можно будет вернуться в один клик." />
+                    </StackPanel>
+                </ctl:DashedBorder>
+            </Grid>
+        </DockPanel>
+    </Grid>
+</UserControl>

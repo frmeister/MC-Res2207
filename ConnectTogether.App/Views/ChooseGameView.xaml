@@ -1,0 +1,53 @@
+<!-- 1c. Создание комнаты, шаг 1: выбор игры -->
+<UserControl x:Class="ConnectTogether.App.Views.ChooseGameView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:ConnectTogether.App.Controls"
+             xmlns:vm="clr-namespace:ConnectTogether.App.ViewModels">
+    <DockPanel>
+        <ctl:WizardHeader DockPanel.Dock="Top" Step="1" BackCommand="{Binding BackCommand}" />
+
+        <Border DockPanel.Dock="Bottom" Padding="32,20" BorderBrush="{DynamicResource Bd}" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Style="{StaticResource Btn.Secondary}" Content="Отмена" Command="{Binding BackCommand}" IsCancel="True" />
+                <Button Margin="10,0,0,0" Padding="20,0" Style="{StaticResource Btn.Primary}" IsDefault="True"
+                        ctl:Ui.TrailingIcon="arrowRight" Content="{Binding NextLabel}" Command="{Binding NextCommand}" />
+            </StackPanel>
+        </Border>
+
+        <StackPanel Width="720" Margin="0,28,0,0" HorizontalAlignment="Center">
+            <TextBlock Style="{StaticResource T.ScreenTitle}" Text="Во что будете играть?" />
+            <TextBlock Margin="0,6,0,0" FontSize="15" Foreground="{DynamicResource Tx2}"
+                       Text="Сервер игры должен быть запущен на этом компьютере." />
+
+            <ItemsControl Margin="0,28,-16,-16" ItemsSource="{Binding Games}" Focusable="False">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Columns="2" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:GameOption}">
+                        <RadioButton Margin="0,0,16,16" Style="{StaticResource Radio.GameCard}" GroupName="game"
+                                     IsChecked="{Binding IsSelected}">
+                            <StackPanel>
+                                <Border Width="52" Height="52" CornerRadius="13" HorizontalAlignment="Left" Background="{DynamicResource Sf3}">
+                                    <ctl:Icon Kind="{Binding Game.Icon}" Width="26" Height="26" />
+                                </Border>
+                                <TextBlock Margin="0,16,0,0" Text="{Binding Game.Name}" FontSize="19" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,4,0,0" Text="{Binding Game.Subtitle}" FontSize="13" Foreground="{DynamicResource Tx3}" />
+                                <TextBlock Margin="0,16,0,0" Text="{Binding Game.SelectionHint}" FontSize="14" LineHeight="20"
+                                           LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{DynamicResource Tx2}" />
+                            </StackPanel>
+                        </RadioButton>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Margin="0,28,0,0" FontSize="14" Foreground="{DynamicResource Tx3}">
+                <Run Text="Нет нужной игры? Поддержку добавляют через" />
+                <Hyperlink Style="{StaticResource Link}" Command="{Binding OpenIntegrationsCommand}">интеграции</Hyperlink><Run Text="." />
+            </TextBlock>
+        </StackPanel>
+    </DockPanel>
+</UserControl>
