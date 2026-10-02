@@ -217,6 +217,110 @@ namespace MCTunnel.Tests
         }
 
         [Fact]
+        public async Task SendDatagramAsync_IsDeliveredToDatagramReceived()
+        {
+            using var peerA = CreatePeer();
+            using var peerB = CreatePeer();
+            using var channelA = new ReliableChannel(peerA);
+            using var channelB = new ReliableChannel(peerB);
+
+            var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            channelB.DatagramReceived += (_, data) => received.TrySetResult(Encoding.UTF8.GetString(data));
+
+            await ConnectPairAsync(channelA, peerA, channelB, peerB);
+            await channelA.SendDatagramAsync(Encoding.UTF8.GetBytes("datagram"));
+
+            Assert.Equal("datagram", await received.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+
+        // Пересылает пакеты между двумя каналами и теряет часть пакетов данных и подтверждений
+        private sealed class LossyRelay : IDisposable
+        {
+            private readonly Random _random;
+            private readonly double _lossRate;
+
+            public UdpPeer SideA { get; } = CreatePeer(); // Сюда подключается канал A
+            public UdpPeer SideB { get; } = CreatePeer(); // Сюда подключается канал B
+
+            public LossyRelay(IPEndPoint channelA, IPEndPoint channelB, double lossRate, int seed)
+            {
+                _random = new Random(seed);
+                _lossRate = lossRate;
+                SideA.DataReceived += (_, e) => { if (!Drop(e.Data)) _ = SideB.SendToAsync(e.Data, channelB); };
+                SideB.DataReceived += (_, e) => { if (!Drop(e.Data)) _ = SideA.SendToAsync(e.Data, channelA); };
+            }
+
+            // Рукопожатие не трогаем, чтобы тест не ждал повторов Hello
+            private bool Drop(byte[] data)
+            {
+                if (data.Length == 0 || (data[0] != (byte)PacketType.Data && data[0] != (byte)PacketType.Ack)) return false;
+                lock (_random) { return _random.NextDouble() < _lossRate; }
+            }
+
+            public void Dispose()
+            {
+                SideA.Dispose();
+                SideB.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task SendDataAsync_OverLossyLink_DeliversEverythingInOrder()
+        {
+            using var peerA = CreatePeer();
+            using var peerB = CreatePeer();
+            using var relay = new LossyRelay(peerA.LocalEndPoint!, peerB.LocalEndPoint!, lossRate: 0.1, seed: 42);
+            using var channelA = new ReliableChannel(peerA);
+            using var channelB = new ReliableChannel(peerB);
+
+            var received = new ConcurrentQueue<int>();
+            channelB.DataReceived += (_, data) => received.Enqueue(BitConverter.ToInt32(data, 0));
+
+            var connected = await Task.WhenAll(
+                channelA.ConnectAsync(relay.SideA.LocalEndPoint!),
+                channelB.ConnectAsync(relay.SideB.LocalEndPoint!));
+            Assert.All(connected, Assert.True);
+
+            const int count = 500;
+            for (int i = 0; i < count; i++)
+            {
+                var message = new byte[1000];
+                BitConverter.TryWriteBytes(message, i);
+                await channelA.SendDataAsync(message);
+            }
+
+            await WaitUntilAsync(() => received.Count >= count, timeoutMs: 30000);
+            Assert.Equal(Enumerable.Range(0, count), received.ToList());
+            Assert.Equal(ConnectionState.Established, channelA.State);
+        }
+
+        // Окно отправки: несколько мегабайт должны пройти за секунды, а не за минуты, как при ожидании ACK каждого пакета
+        [Fact]
+        public async Task SendDataAsync_ManyPackets_TransfersQuickly()
+        {
+            using var peerA = CreatePeer();
+            using var peerB = CreatePeer();
+            using var channelA = new ReliableChannel(peerA);
+            using var channelB = new ReliableChannel(peerB);
+
+            long receivedBytes = 0;
+            channelB.DataReceived += (_, data) => Interlocked.Add(ref receivedBytes, data.Length);
+            await ConnectPairAsync(channelA, peerA, channelB, peerB);
+
+            const int count = 4000;
+            var chunk = new byte[ReliableChannel.SafePayloadSize];
+            var stopwatch = Stopwatch.StartNew();
+            for (int i = 0; i < count; i++)
+            {
+                await channelA.SendDataAsync(chunk);
+            }
+
+            await WaitUntilAsync(() => Interlocked.Read(ref receivedBytes) >= (long)count * chunk.Length, timeoutMs: 15000);
+            Assert.Equal((long)count * chunk.Length, Interlocked.Read(ref receivedBytes));
+            Assert.True(stopwatch.ElapsedMilliseconds < 15000, $"Transfer took {stopwatch.ElapsedMilliseconds} ms");
+        }
+
+        [Fact]
         public async Task ConnectAsync_WithoutRemoteChannel_ReturnsFalseAfterTimeout()
         {
             using var peerA = CreatePeer();

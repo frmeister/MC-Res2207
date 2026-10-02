@@ -30,26 +30,37 @@ namespace MCTunnel.Core.Network
 
         public event EventHandler<UdpDataReceivedEventArgs>? DataReceived; // Nullable reference type для события
 
+        // Окно отправки ReliableChannel и всплески игрового трафика легко переполняют стандартный буфер сокета,
+        // и лишние пакеты теряются ещё до нашего кода
+        private const int SocketBufferSize = 1 << 20;
+
         public UdpPeer(int localPort)
         {
             _udpClient = new UdpClient(localPort);
-            DisableConnectionResetErrors(_udpClient);
+            ConfigureSocket(_udpClient.Client);
         }
 
         public UdpPeer(IPEndPoint localEndpoint)
         {
             _udpClient = new UdpClient(localEndpoint);
-            DisableConnectionResetErrors(_udpClient);
+            ConfigureSocket(_udpClient.Client);
+        }
+
+        private static void ConfigureSocket(Socket socket)
+        {
+            socket.ReceiveBufferSize = SocketBufferSize;
+            socket.SendBufferSize = SocketBufferSize;
+            DisableConnectionResetErrors(socket);
         }
 
         // Windows: после ICMP "port unreachable" на отправленный пакет следующий ReceiveAsync падает с ConnectionReset (10054).
         // При пробое NAT такие ICMP приходят постоянно (партнёр ещё не запустился), поэтому отключаем это поведение
-        private static void DisableConnectionResetErrors(UdpClient udpClient)
+        internal static void DisableConnectionResetErrors(Socket socket)
         {
             if (!OperatingSystem.IsWindows()) return;
 
             const int SIO_UDP_CONNRESET = -1744830452; // _WSAIOW(IOC_VENDOR, 12)
-            udpClient.Client.IOControl(SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
+            socket.IOControl(SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
         }
 
         // Send data to specific address

@@ -14,9 +14,26 @@ namespace MC_Ref2207_NetSocketLib
     {
         // -- Конфигурация --
         private const int MaxRetries = 5;
-        private const int RetryDelayMs = 1000;
+        private const int RetryDelayMs = 1000; // Интервал Hello при рукопожатии
         private const int InactivityTimeoutMs = 30000;
         private const int KeepAliveIntervalMs = 5000; // Чаще таймаута неактивности и времени жизни UDP-маппинга в типичном NAT
+
+        // Отправка окном: до SendWindowSize пакетов в пути без подтверждения. Ждать ACK каждого пакета
+        // (как раньше) — это один пакет за время туда-обратно, для Minecraft на порядки медленнее нужного.
+        private const int SendWindowSize = 64;
+        private const int SendQueueCapacity = 256; // Очередь полна — SendDataAsync ждёт, и источник данных притормаживает
+        private const int MaxOutOfOrderPackets = SendWindowSize * 4; // Пакеты дальше по номеру — мусор, не буферизуем
+        private const int InitialRtoMs = 1000; // Таймаут повтора до первого замера RTT (RFC 6298)
+        private const int MinRtoMs = 200;
+        private const int MaxRtoMs = 3000;
+        private const int RetransmitCheckIntervalMs = 20;
+        private const int DeliveryTimeoutMs = 10000; // Пакет не подтверждён дольше — партнёр считается потерянным
+
+        /// <summary>
+        /// Размер данных, который помещается в один IP-пакет почти на любом пути в интернете (как минимальный размер в QUIC).
+        /// Большие сообщения тоже доставляются, но IP режет их на фрагменты, и потеря любого фрагмента теряет весь пакет.
+        /// </summary>
+        public const int SafePayloadSize = 1200;
 
         // -- Состояния и зависимости --
         private volatile ConnectionState _state = ConnectionState.Disconnected;
@@ -33,7 +50,13 @@ namespace MC_Ref2207_NetSocketLib
         // -- Для отправки --
         private int _nextSendSeq = 0; // Следующий номер последовательности для отправки
         private readonly ConcurrentDictionary<int, OutgoingPacket> _sentPackets = new(); // Отправленные, но ещё не подтверждённые пакеты
-        private readonly Channel<byte[]> _sendQueue = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true }); // Очередь данных для отправки
+        private readonly Channel<byte[]> _sendQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(SendQueueCapacity) { SingleReader = true }); // Очередь данных для отправки
+        private readonly SemaphoreSlim _windowSlots = new(SendWindowSize, SendWindowSize); // Свободные места в окне отправки
+        private readonly object _rttLock = new object();
+        private double _smoothedRttMs;
+        private double _rttVariationMs;
+        private bool _hasRttSample;
+        private int _rtoMs = InitialRtoMs;
 
         // -- Для получения --
         private int _expectedRecvSeq = 0; // Ожидаемый номер последовательности для получения
@@ -62,6 +85,17 @@ namespace MC_Ref2207_NetSocketLib
             }
         }
 
+        /// <summary>
+        /// Датаграмма без гарантии доставки и порядка (SendDatagramAsync партнёра).
+        /// Вызывается прямо в потоке приёма UDP — обработчик должен быть быстрым и не блокирующим.
+        /// </summary>
+        public event EventHandler<byte[]>? DatagramReceived;
+
+        /// <summary>
+        /// Соединение закрыто: вызовом Close(), по неактивности партнёра или потому что данные не удалось доставить.
+        /// </summary>
+        public event EventHandler? Closed;
+
         public ReliableChannel(UdpPeer udpPeer)
         {
             _udpPeer = udpPeer ?? throw new ArgumentNullException(nameof(udpPeer));
@@ -71,8 +105,9 @@ namespace MC_Ref2207_NetSocketLib
             // Таймер keep-alive и проверки неактивности, запускается после установки соединения
             _keepAliveTimer = new Timer(CheckConnection, null, Timeout.Infinite, Timeout.Infinite);
 
-            // Фоновая отправка работает до Close()
+            // Фоновая отправка и повтор потерянных пакетов работают до Close()
             Task.Run(ProcessSendQueueAsync);
+            Task.Run(RetransmitLoopAsync);
         }
 
         public ConnectionState State => _state;
@@ -182,8 +217,10 @@ namespace MC_Ref2207_NetSocketLib
         }
 
         // -- Отправка данных --
-        // Данные ставятся в очередь и отправляются в фоне; метод не ждёт подтверждения доставки.
-        public Task SendDataAsync(byte[] data, CancellationToken cancellationToken = default)
+        // Данные доставляются надёжно и по порядку. Метод ставит их в очередь и не ждёт подтверждения доставки,
+        // но если очередь заполнена (сеть не успевает), ждёт освобождения места.
+        // Для передачи через интернет лучше не больше SafePayloadSize байт за раз.
+        public async Task SendDataAsync(byte[] data, CancellationToken cancellationToken = default)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
             if (data.Length > Packet.MaxPayloadSize)
@@ -195,22 +232,55 @@ namespace MC_Ref2207_NetSocketLib
                 throw new InvalidOperationException($"Cannot send data while in state: {_state}");
             }
 
-            // Копируем: вызывающий код может переиспользовать массив, пока пакет ещё в очереди
-            if (!_sendQueue.Writer.TryWrite((byte[])data.Clone()))
+            try
+            {
+                // Копируем: вызывающий код может переиспользовать массив, пока пакет ещё в очереди
+                await _sendQueue.Writer.WriteAsync((byte[])data.Clone(), cancellationToken);
+            }
+            catch (ChannelClosedException)
+            {
+                throw new InvalidOperationException($"Cannot send data while in state: {_state}");
+            }
+        }
+
+        // -- Отправка датаграмм --
+        // Без гарантии доставки и порядка, сразу в сеть, мимо очереди надёжных данных.
+        // Подходит для пересылки трафика UDP-игр: они сами повторяют потерянное, а повторы туннеля только добавили бы задержку.
+        public Task SendDatagramAsync(byte[] data)
+        {
+            if (data == null) throw new ArgumentNullException(nameof(data));
+            if (data.Length > Packet.MaxPayloadSize)
+            {
+                throw new ArgumentException($"Data is larger than {Packet.MaxPayloadSize} bytes and does not fit into one packet.", nameof(data));
+            }
+            if (_state != ConnectionState.Established)
             {
                 throw new InvalidOperationException($"Cannot send data while in state: {_state}");
             }
 
-            return Task.CompletedTask;
+            return SendRawAsync(new Packet(data, 0, 0, PacketType.Datagram).ToBytes(), PacketType.Datagram);
         }
 
         private async Task ProcessSendQueueAsync()
         {
+            var closeToken = _closeCts.Token;
             try
             {
-                await foreach (var dataToSend in _sendQueue.Reader.ReadAllAsync(_closeCts.Token))
+                await foreach (var dataToSend in _sendQueue.Reader.ReadAllAsync(closeToken))
                 {
-                    await SendPacketWithRetryAsync(dataToSend);
+                    // Не больше SendWindowSize неподтверждённых пакетов: место освобождает HandleAck
+                    await _windowSlots.WaitAsync(closeToken);
+                    if (_state != ConnectionState.Established)
+                    {
+                        _windowSlots.Release();
+                        return;
+                    }
+
+                    var packet = new Packet(dataToSend, Interlocked.Increment(ref _nextSendSeq) - 1); // Увеличиваем seq затем используем
+                    var outgoingPacket = new OutgoingPacket(packet.Sequence, packet.ToBytes(), Environment.TickCount64, CurrentRtoMs);
+                    _sentPackets[packet.Sequence] = outgoingPacket;
+
+                    await SendRawAsync(outgoingPacket.Bytes, PacketType.Data);
                 }
             }
             catch (OperationCanceledException)
@@ -219,44 +289,83 @@ namespace MC_Ref2207_NetSocketLib
             }
         }
 
-        private async Task SendPacketWithRetryAsync(byte[] data)
+        // Повторяет пакеты, на которые ACK не пришёл за RTO. Для каждого следующего повтора пакета интервал удваивается.
+        private async Task RetransmitLoopAsync()
         {
-            var packet = new Packet(data, Interlocked.Increment(ref _nextSendSeq) - 1); // Увеличиваем seq затем используем
-            var outgoingPacket = new OutgoingPacket(packet, DateTime.UtcNow);
-            _sentPackets[packet.Sequence] = outgoingPacket;
-
-            byte[] bytes = packet.ToBytes();
-
-            for (int attempt = 0; attempt < MaxRetries; attempt++)
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(RetransmitCheckIntervalMs));
+            try
             {
-                if (_state != ConnectionState.Established) return; // Соединение разорвано
-                if (outgoingPacket.Acked.Task.IsCompleted) return;
+                while (await timer.WaitForNextTickAsync(_closeCts.Token))
+                {
+                    if (_state != ConnectionState.Established) continue;
 
-                await SendRawAsync(bytes, packet.Type);
-                Trace.WriteLine($"[Core.Network.ReliableChannel] Sent packet seq={packet.Sequence}, Type={packet.Type}, Attempt={attempt + 1}");
+                    long now = Environment.TickCount64;
+                    foreach (var outgoingPacket in _sentPackets.Values)
+                    {
+                        bool resend = false;
+                        bool giveUp = false;
+                        int attempt = 0;
+                        lock (outgoingPacket)
+                        {
+                            if (now - outgoingPacket.FirstSentTicks > DeliveryTimeoutMs)
+                            {
+                                giveUp = true;
+                            }
+                            else if (now - outgoingPacket.LastSentTicks >= outgoingPacket.RtoMs)
+                            {
+                                resend = true;
+                                outgoingPacket.LastSentTicks = now;
+                                outgoingPacket.Attempts++;
+                                outgoingPacket.RtoMs = Math.Min(outgoingPacket.RtoMs * 2, MaxRtoMs);
+                                attempt = outgoingPacket.Attempts;
+                            }
+                        }
 
-                // Ждем подтверждения либо таймаута
-                try
-                {
-                    await outgoingPacket.Acked.Task.WaitAsync(TimeSpan.FromMilliseconds(RetryDelayMs), _closeCts.Token);
-                    return; // Подтверждён (или отменён сбросом сессии)
-                }
-                catch (TimeoutException)
-                {
-                    // Повторяем отправку
-                }
-                catch (OperationCanceledException)
-                {
-                    return; // Close()
+                        if (giveUp)
+                        {
+                            // Получатель выдаёт данные строго по порядку и без этого пакета никогда не отдаст следующие,
+                            // поэтому продолжать нельзя — закрываем соединение
+                            Trace.WriteLine($"[Core.Network.ReliableChannel] Packet seq={outgoingPacket.Sequence} not confirmed for {DeliveryTimeoutMs}ms. Closing connection.");
+                            Close();
+                            return;
+                        }
+
+                        if (resend && _sentPackets.ContainsKey(outgoingPacket.Sequence))
+                        {
+                            Trace.WriteLine($"[Core.Network.ReliableChannel] Retransmitting seq={outgoingPacket.Sequence}, attempt {attempt}");
+                            await SendRawAsync(outgoingPacket.Bytes, PacketType.Data);
+                        }
+                    }
                 }
             }
-
-            // Если после всех попыток пакет не подтвержден — закрываем соединение: получатель выдаёт данные
-            // строго по порядку и без этого пакета никогда не отдаст следующие, канал "завис" бы навсегда
-            if (_sentPackets.TryRemove(packet.Sequence, out _))
+            catch (OperationCanceledException)
             {
-                Trace.WriteLine($"[Core.Network.ReliableChannel] Failed to confirm packetSeq={packet.Sequence} after {MaxRetries} retries. Closing connection.");
-                Close();
+                // Close() — выходим
+            }
+        }
+
+        private int CurrentRtoMs
+        {
+            get { lock (_rttLock) { return _rtoMs; } }
+        }
+
+        // Таймаут повтора по замерам RTT, как в TCP (RFC 6298)
+        private void UpdateRto(long rttMs)
+        {
+            lock (_rttLock)
+            {
+                if (!_hasRttSample)
+                {
+                    _smoothedRttMs = rttMs;
+                    _rttVariationMs = rttMs / 2.0;
+                    _hasRttSample = true;
+                }
+                else
+                {
+                    _rttVariationMs = 0.75 * _rttVariationMs + 0.25 * Math.Abs(_smoothedRttMs - rttMs);
+                    _smoothedRttMs = 0.875 * _smoothedRttMs + 0.125 * rttMs;
+                }
+                _rtoMs = (int)Math.Clamp(_smoothedRttMs + 4 * _rttVariationMs, MinRtoMs, MaxRtoMs);
             }
         }
 
@@ -290,12 +399,8 @@ namespace MC_Ref2207_NetSocketLib
 
             try
             {
+                // Отдельные пакеты данных не логируем: при пересылке игрового трафика их сотни в секунду
                 var packet = Packet.FromBytes(e.Data);
-                Trace.WriteLine($"[Core.Network.ReliableChannel] Received packet " +
-                    $"Seq={packet.Sequence}," +
-                    $"Type={packet.Type}," +
-                    $"Ack={packet.Acknowledgment}," +
-                    $"PayloadLen={packet.Payload.Length}");
 
                 // Активностью считаем только корректные пакеты
                 Interlocked.Exchange(ref _lastReceivedTicks, Environment.TickCount64);
@@ -317,6 +422,9 @@ namespace MC_Ref2207_NetSocketLib
                     case PacketType.KeepAlive:
                         // Достаточно обновления времени активности выше
                         break;
+                    case PacketType.Datagram:
+                        HandleDatagram(packet);
+                        break;
                     default:
                         Trace.WriteLine($"[Core.Network.ReliableChannel] Unknown packet type: {packet.Type}");
                         break;
@@ -334,20 +442,42 @@ namespace MC_Ref2207_NetSocketLib
 
         private void HandleAck(int ackSeq)
         {
-            if (_sentPackets.TryRemove(ackSeq, out var outgoingPacket))
+            // Нет в словаре — ACK на повтор уже подтверждённого пакета, ничего не делаем
+            if (!_sentPackets.TryRemove(ackSeq, out var outgoingPacket)) return;
+
+            int attempts;
+            long lastSentTicks;
+            lock (outgoingPacket)
             {
-                Trace.WriteLine($"[Core.Network.ReliableChannel] ACK received for Seq={ackSeq}");
-                outgoingPacket.Acked.TrySetResult(); // Пакет успешно подтвержден
+                attempts = outgoingPacket.Attempts;
+                lastSentTicks = outgoingPacket.LastSentTicks;
             }
-            else
+
+            // RTT меряем только по пакетам без повторов: иначе неясно, на какую из отправок пришёл ACK (алгоритм Карна)
+            if (attempts == 1)
             {
-                // ACK для пакета который уже был подтвержден или никогда не отправлялся
-                Trace.WriteLine($"[Core.Network.ReliableChannel] Duplicate or unexpected ACK for Seq={ackSeq}");
+                UpdateRto(Environment.TickCount64 - lastSentTicks);
+            }
+            _windowSlots.Release(); // Место в окне освободилось
+        }
+
+        private void HandleDatagram(Packet packet)
+        {
+            try
+            {
+                DatagramReceived?.Invoke(this, packet.Payload);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[Core.Network.ReliableChannel] DatagramReceived handler threw exception: {ex}");
             }
         }
 
         private void HandleData(Packet packet)
         {
+            // Так далеко вперёд честный отправитель уйти не может (окно меньше) — не буферизуем и не подтверждаем
+            if (packet.Sequence >= _expectedRecvSeq + MaxOutOfOrderPackets) return;
+
             // Отправляем ACK для полученного пакета
             SendAck(packet.Sequence);
 
@@ -367,8 +497,7 @@ namespace MC_Ref2207_NetSocketLib
             }
             else if (packet.Sequence > _expectedRecvSeq)
             {
-                // Получен пакет с более высоким номером
-                Trace.WriteLine($"[Core.Network.ReliableChannel] Out of order packet received Seq={packet.Sequence}, Expected={_expectedRecvSeq}. Buffering.");
+                // Получен пакет с более высоким номером (предыдущий потерялся) — ждём повтора пропущенного
                 _receivedBuffer[packet.Sequence] = packet.Payload;
             }
             // else: packet.Sequence < _expectedRecvSeq -> дубликат, игнорируем (уже обработан)
@@ -378,7 +507,6 @@ namespace MC_Ref2207_NetSocketLib
         {
             var ackPacket = new Packet(Array.Empty<byte>(), 0, seqNum, PacketType.Ack); // Ack не содержит полезной нагрузки
             _ = SendRawAsync(ackPacket.ToBytes(), PacketType.Ack); // Не ждем завершения отправки Ack
-            Trace.WriteLine($"[Core.Network.ReliableChannel] Sent ACK for Seq={seqNum}");
         }
 
         private void EnqueueReceivedData(byte[] data)
@@ -446,7 +574,7 @@ namespace MC_Ref2207_NetSocketLib
                 foreach (var seq in _sentPackets.Keys)
                 {
                     // Старые пакеты новой сессии партнёра не нужны — прекращаем их переотправку
-                    if (_sentPackets.TryRemove(seq, out var stale)) stale.Acked.TrySetResult();
+                    if (_sentPackets.TryRemove(seq, out _)) _windowSlots.Release();
                 }
             }
             _peerSessionId = incomingSession;
@@ -505,6 +633,18 @@ namespace MC_Ref2207_NetSocketLib
             _closeCts.Cancel(); // Останавливаем фоновую отправку
             _sendQueue.Writer.TryComplete();
             _receiveQueue.Writer.TryComplete(); // Читатели дочитают уже полученные данные и завершатся
+            Trace.WriteLine("[Core.Network.ReliableChannel] Connection closed.");
+
+            // Не в текущем потоке: Close() может вызываться из обработчиков и фоновых циклов самого канала
+            var closed = Closed;
+            if (closed != null)
+            {
+                _ = Task.Run(() =>
+                {
+                    try { closed(this, EventArgs.Empty); }
+                    catch (Exception ex) { Trace.WriteLine($"[Core.Network.ReliableChannel] Closed handler threw exception: {ex}"); }
+                });
+            }
         }
 
         public void Dispose()
@@ -515,16 +655,23 @@ namespace MC_Ref2207_NetSocketLib
         }
 
         // -- Вспомогательный класс --
+        // Изменяемые поля меняются под lock (outgoingPacket)
         private class OutgoingPacket
         {
-            public Packet Packet { get; }
-            public DateTime SentAt { get; set; }
-            public TaskCompletionSource Acked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public int Sequence { get; }
+            public byte[] Bytes { get; }
+            public long FirstSentTicks { get; }
+            public long LastSentTicks { get; set; }
+            public int Attempts { get; set; } = 1;
+            public int RtoMs { get; set; }
 
-            public OutgoingPacket(Packet packet, DateTime sentAt)
+            public OutgoingPacket(int sequence, byte[] bytes, long sentTicks, int rtoMs)
             {
-                Packet = packet;
-                SentAt = sentAt;
+                Sequence = sequence;
+                Bytes = bytes;
+                FirstSentTicks = sentTicks;
+                LastSentTicks = sentTicks;
+                RtoMs = rtoMs;
             }
         }
     }

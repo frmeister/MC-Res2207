@@ -8,6 +8,13 @@
 // 3. Обе стороны одновременно шлют друг другу пакеты (UDP hole punching): исходящий пакет открывает
 //    в своём NAT проход для встречных. Нажимать Enter точно одновременно не нужно — попытка длится 30 секунд.
 // 4. Если NAT пробит — откроется простой текстовый чат через ReliableChannel.
+//
+// Пересылка портов игрового сервера (например, Rust или Minecraft):
+// - тот, у кого запущен сервер, на вопрос про порты вводит udp:28015 (Rust) или tcp:25565 (Minecraft);
+// - у партнёра откроется свободный порт на 127.0.0.1, и программа подскажет, куда подключаться в игре
+//   (Rust: F1 → client.connect 127.0.0.1:<порт>, Minecraft: Прямое подключение → 127.0.0.1:<порт>).
+// Программа должна работать у обоих всё время игры.
+//
 // Для проверки на одном компьютере запустите две копии с разными портами и вводите 127.0.0.1:<порт другой копии>.
 // Отладочный лог каждого запуска пишется в папку logs рядом с программой.
 //
@@ -16,6 +23,7 @@
 //   и пробой не сработает. Тогда нужен проброс порта на роутере на выбранный локальный порт.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -83,6 +91,7 @@ namespace MinecraftTunnel.ConsoleHost
 
             // 1. Узнаём внешний адрес сокета — его нужно продиктовать второй стороне
             var stun = await DiscoverPublicAddressAsync(peer, localPort);
+            var shares = ReadShares();
 
             // 2. Пока люди обмениваются адресами, не даём NAT забыть маппинг
             var keepAliveCts = new CancellationTokenSource();
@@ -114,13 +123,24 @@ namespace MinecraftTunnel.ConsoleHost
 
             Console.WriteLine($"NAT пробит, партнёр: {remoteEndPoint}");
 
-            // 4. Поднимаем надёжный канал поверх пробитого UDP-соединения
+            // 4. Поднимаем надёжный канал поверх пробитого UDP-соединения, поверх него — чат и пересылку портов
             using var channel = new ReliableChannel(peer);
-            channel.DataReceived += (_, data) =>
+            using var session = new TunnelSession(channel);
+            session.TextReceived += (_, text) =>
             {
-                Console.WriteLine($"\n[Партнёр]: {Encoding.UTF8.GetString(data)}");
+                Console.WriteLine($"\n[Партнёр]: {text}");
                 Console.Write("> ");
             };
+            session.RemotePortOpened += (_, port) =>
+            {
+                Console.WriteLine($"\nПартнёр открыл {port.RemoteRule}: подключайтесь в игре к {port.LocalEndPoint}");
+                // Без стрелок "→": консоль Windows в кодировке cp866 их не показывает
+                Console.WriteLine(port.RemoteRule.Protocol == ForwardProtocol.Udp
+                    ? $"  Например, в Rust: F1, затем client.connect {port.LocalEndPoint}"
+                    : $"  Например, в Minecraft: Сетевая игра > Прямое подключение > {port.LocalEndPoint}");
+                Console.Write("> ");
+            };
+            channel.Closed += (_, _) => Console.WriteLine("\nСоединение с партнёром закрыто. Нажмите Enter.");
 
             bool connected;
             try
@@ -140,7 +160,14 @@ namespace MinecraftTunnel.ConsoleHost
                 return;
             }
 
-            Console.WriteLine("Канал установлен. Пишите сообщения, Ctrl+C — выход.\n");
+            if (shares.Count > 0)
+            {
+                await session.ShareAsync(shares);
+                Console.WriteLine($"Партнёру открыты порты: {string.Join(", ", shares)}.");
+            }
+
+            Console.WriteLine("Соединение установлено. Не закрывайте программу, пока идёт игра.");
+            Console.WriteLine("Здесь можно писать сообщения партнёру, Ctrl+C — выход.\n");
 
             while (true)
             {
@@ -157,13 +184,51 @@ namespace MinecraftTunnel.ConsoleHost
 
                 try
                 {
-                    await channel.SendDataAsync(Encoding.UTF8.GetBytes(line));
+                    await session.SendTextAsync(line);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Ошибка отправки: {ex.Message}");
                     Trace.WriteLine($"[Program] SendDataAsync failed: {ex}");
                 }
+            }
+        }
+
+        // Порты своих серверов, которые откроем партнёру
+        private static List<ForwardRule> ReadShares()
+        {
+            while (true)
+            {
+                Console.WriteLine("Какие порты вашего сервера открыть партнёру? Например: udp:28015 — Rust, tcp:25565 — Minecraft.");
+                Console.Write("Несколько — через запятую, Enter — никакие: ");
+                var input = Console.ReadLine();
+                if (string.IsNullOrWhiteSpace(input)) return new List<ForwardRule>();
+
+                var rules = new List<ForwardRule>();
+                string? invalid = null;
+                foreach (var part in input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (ForwardRule.TryParse(part, out var rule)) rules.Add(rule);
+                    else invalid ??= part;
+                }
+
+                if (invalid != null)
+                {
+                    Console.WriteLine($"Не понял \"{invalid}\": нужно в виде udp:28015 или tcp:25565.");
+                    continue;
+                }
+
+                foreach (var rule in rules)
+                {
+                    if (rule.IsLocalPortFree())
+                    {
+                        Console.WriteLine($"Внимание: на {rule} сейчас ничего не запущено. Запустите сервер, иначе партнёр не подключится.");
+                    }
+                }
+
+                Trace.WriteLine($"[Program] Ports to share: {string.Join(", ", rules)}");
+                Console.WriteLine();
+                return rules;
             }
         }
 

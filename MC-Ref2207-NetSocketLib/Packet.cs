@@ -14,7 +14,8 @@ namespace MC_Ref2207_NetSocketLib
         Ack = 1,
         Hello = 2,     // Запрос рукопожатия: [sessionId отправителя]
         HelloAck = 3,  // Ответ на Hello: [sessionId отправителя][sessionId из Hello]
-        KeepAlive = 4  // Поддержание соединения и NAT-маппинга, без нагрузки
+        KeepAlive = 4, // Поддержание соединения и NAT-маппинга, без нагрузки
+        Datagram = 5   // Данные без подтверждения и порядка (пересылка UDP)
     }
     public class Packet
     {
